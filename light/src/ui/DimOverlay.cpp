@@ -94,8 +94,14 @@ void DimOverlay::Apply(int percent) {
         HWND hWnd = (i < m_windows.size()) ? m_windows[i] : nullptr;
 
         if (!IsWindow(hWnd)) {
-            hWnd = CreateWindowEx(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kDimOverlayClassName, L"", WS_POPUP, rect.left,
-                                  rect.top, rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr, hInstance, nullptr);
+            hWnd = CreateWindowEx(
+                WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                kDimOverlayClassName, L"",
+                WS_POPUP,
+                rect.left, rect.top,
+                rect.right - rect.left, rect.bottom - rect.top,
+                nullptr, nullptr, hInstance, nullptr
+            );
 
             if (i < m_windows.size()) {
                 m_windows[i] = hWnd;

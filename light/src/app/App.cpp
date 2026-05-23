@@ -90,7 +90,11 @@ bool App::CreateMsgWindow() {
         return false;
     }
 
-    m_hMsgWnd = CreateWindowEx(0, L"ScreenBrightnessMessageWindowClass", L"Brightness Message Handler", 0, 0, 0, 0, 0, nullptr, nullptr, m_hInstance, this);
+    m_hMsgWnd = CreateWindowEx(
+        0,
+        L"ScreenBrightnessMessageWindowClass", L"Brightness Message Handler",
+        0, 0, 0, 0, 0,
+        nullptr, nullptr, m_hInstance, this);
 
     return m_hMsgWnd != nullptr;
 }

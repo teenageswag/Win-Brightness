@@ -1,5 +1,4 @@
 #pragma once
-
 #include "../brightness/BrightnessTypes.h"
 #include <windows.h>
 

@@ -1,5 +1,4 @@
 #pragma once
-
 #include "../brightness/BrightnessController.h"
 #include "../ui/PopupView.h"
 #include "SettingsStore.h"

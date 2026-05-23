@@ -51,8 +51,13 @@ bool PopupView::Register() {
 }
 
 bool PopupView::Create() {
-    m_hWnd = CreateWindowEx(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"BrightnessPopup", L"", WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, kBaseWidth, kBaseHeight, nullptr,
-                            nullptr, m_hInstance, this);
+    m_hWnd = CreateWindowEx(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+        L"BrightnessPopup", L"",
+        WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT,
+        kBaseWidth, kBaseHeight,
+        nullptr, nullptr, m_hInstance, this
+    );
     return m_hWnd != nullptr;
 }
 

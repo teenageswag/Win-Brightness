@@ -1,5 +1,4 @@
 #pragma once
-
 #include "BrightnessTypes.h"
 #include "HardwareBrightness.h"
 #include "SoftwareBrightness.h"
