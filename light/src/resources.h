@@ -1,0 +1,8 @@
+#pragma once
+
+#define IDI_APP_ICON 101
+#define ID_MENU_EXIT 1001
+
+#define WM_USER_SHELLICON (WM_USER + 1)
+#define WM_USER_BRIGHTNESS_CHANGED (WM_USER + 2)
+#define WM_USER_MODE_CHANGED (WM_USER + 3)
