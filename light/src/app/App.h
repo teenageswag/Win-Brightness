@@ -1,19 +1,15 @@
 #pragma once
 
-#include <windows.h>
+#include "../brightness/BrightnessController.h"
+#include "../ui/PopupView.h"
+#include "SettingsStore.h"
+#include <memory>
 #include <shellapi.h>
-#include "BrightnessController.h"
-#include "PopupView.h"
-#include "resources.h"
+#include <windows.h>
 
-#define ID_MENU_AUTOSTART 1002
-#define ID_MENU_MODE_HARDWARE 1101
-#define ID_MENU_MODE_SOFTWARE 1102
-
-class App
-{
+class App {
 public:
-    App(HINSTANCE hInstance);
+    explicit App(HINSTANCE hInstance);
     ~App();
 
     bool Init();
@@ -28,12 +24,6 @@ private:
     void UpdateTrayIcon(int percent);
     void ShowDdcFallbackBalloonOnce();
     void ShowContextMenu(POINT pt);
-    bool IsAutostartEnabled() const;
-    void SetAutostartEnabled(bool enabled);
-    BrightnessMode LoadBrightnessMode() const;
-    void SaveBrightnessMode(BrightnessMode mode) const;
-    int LoadBrightness() const;
-    void SaveBrightness(int percent) const;
     void SetBrightnessMode(BrightnessMode mode);
     void FallbackToSoftwareIfNeeded();
 
@@ -41,8 +31,10 @@ private:
     HWND m_hMsgWnd = nullptr;
     HICON m_hAppIcon = nullptr;
     BrightnessController m_controller;
-    PopupView *m_pPopup = nullptr;
+    SettingsStore m_settings;
+    std::unique_ptr<PopupView> m_popup;
     UINT m_msgTaskbarCreated = 0;
     BrightnessMode m_brightnessMode = BrightnessMode::Hardware;
     bool m_ddcFallbackBalloonShown = false;
+    bool m_trayIconAdded = false;
 };

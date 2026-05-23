@@ -156,18 +156,33 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
-    <ClCompile Include="src\App.cpp" />
-    <ClCompile Include="src\BrightnessController.cpp" />
-    <ClCompile Include="src\PopupView.cpp" />
+    <ClCompile Include="src\app\App.cpp" />
+    <ClCompile Include="src\app\SettingsStore.cpp" />
+    <ClCompile Include="src\brightness\BrightnessController.cpp" />
+    <ClCompile Include="src\brightness\HardwareBrightness.cpp" />
+    <ClCompile Include="src\brightness\SoftwareBrightness.cpp" />
+    <ClCompile Include="src\platform\Win32Helpers.cpp" />
+    <ClCompile Include="src\ui\DimOverlay.cpp" />
+    <ClCompile Include="src\ui\PopupView.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\App.h" />
-    <ClInclude Include="src\BrightnessController.h" />
-    <ClInclude Include="src\PopupView.h" />
-    <ClInclude Include="src\resources.h" />
+    <ClInclude Include="src\app\App.h" />
+    <ClInclude Include="src\app\SettingsStore.h" />
+    <ClInclude Include="src\brightness\BrightnessController.h" />
+    <ClInclude Include="src\brightness\BrightnessTypes.h" />
+    <ClInclude Include="src\brightness\HardwareBrightness.h" />
+    <ClInclude Include="src\brightness\SoftwareBrightness.h" />
+    <ClInclude Include="src\main.h" />
+    <ClInclude Include="src\platform\Win32Helpers.h" />
+    <ClInclude Include="src\resources\resources.h" />
+    <ClInclude Include="src\ui\DimOverlay.h" />
+    <ClInclude Include="src\ui\PopupView.h" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="src\resources.rc" />
+    <ResourceCompile Include="src\resources\resources.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="src\resources\app.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
