@@ -210,9 +210,10 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
             graphics.DrawLine(&activeTrack, static_cast<REAL>(trackLeft), static_cast<REAL>(trackCenterY), static_cast<REAL>(thumbX),
                               static_cast<REAL>(trackCenterY));
 
-            const int thumbRadius = ScaleByDpi(kThumbRadius, dpi);
-            SolidBrush thumbBrush(ToGdiColor(kColorText));
-            graphics.FillRectangle(&thumbBrush, thumbX - thumbRadius, trackCenterY - thumbRadius, thumbRadius * 2, thumbRadius * 2);
+            // info: uncomment if u need thumb cube
+            //const int thumbRadius = ScaleByDpi(kThumbRadius, dpi);
+            //SolidBrush thumbBrush(ToGdiColor(kColorText));
+            //graphics.FillRectangle(&thumbBrush, thumbX - thumbRadius, trackCenterY - thumbRadius, thumbRadius * 2, thumbRadius * 2);
 
             wchar_t percentText[8];
             swprintf_s(percentText, L"%d%%", m_displayBrightness);
@@ -220,9 +221,13 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
             Font percentFont(&percentFamily, 9.0f, FontStyleRegular, UnitPoint);
             SolidBrush textBrush(ToGdiColor(kColorText));
             StringFormat percentFormat;
-            percentFormat.SetAlignment(StringAlignmentFar);
+            percentFormat.SetAlignment(StringAlignmentNear);
             percentFormat.SetLineAlignment(StringAlignmentCenter);
-            RectF percentRect(static_cast<REAL>(trackRight + ScaleByDpi(kTrackPercentGap, dpi)), static_cast<REAL>(trackCenterY - ScaleByDpi(15, dpi)),
+
+            // fixme: костыльно выравниваем текст, чтобы он был ровно между краем окна и слайдером. лучше бы делать это динамически
+            int customGap = ScaleByDpi(19, dpi);
+
+            RectF percentRect(static_cast<REAL>(trackRight + customGap), static_cast<REAL>(trackCenterY - ScaleByDpi(15, dpi)),
                               static_cast<REAL>(ScaleByDpi(kPercentWidth, dpi)), static_cast<REAL>(ScaleByDpi(30, dpi)));
             graphics.DrawString(percentText, -1, &percentFont, percentRect, &percentFormat, &textBrush);
 
