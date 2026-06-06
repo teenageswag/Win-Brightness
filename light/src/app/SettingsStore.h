@@ -13,6 +13,9 @@ public:
     bool IsAutostartEnabled() const;
     void SetAutostartEnabled(bool enabled) const;
 
+    bool LoadEnabled() const;
+    void SaveEnabled(bool enabled) const;
+
 private:
     bool TryReadDword(const wchar_t* subKey, const wchar_t* valueName, DWORD& value) const;
 };

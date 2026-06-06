@@ -82,3 +82,19 @@ void SettingsStore::SetAutostartEnabled(bool enabled) const {
         RegDeleteValue(key.Get(), kRunValue);
     }
 }
+
+bool SettingsStore::LoadEnabled() const {
+    DWORD value = 1;
+    TryReadDword(kSettingsKey, L"Enabled", value);
+    return value != 0;
+}
+
+void SettingsStore::SaveEnabled(bool enabled) const {
+    RegistryKey key;
+    if (RegCreateKeyEx(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, key.Put(), nullptr) != ERROR_SUCCESS) {
+        return;
+    }
+
+    const DWORD value = enabled ? 1 : 0;
+    RegSetValueEx(key.Get(), L"Enabled", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value));
+}

@@ -24,6 +24,7 @@ private:
     void ShowDdcFallbackBalloonOnce();
     void ShowContextMenu(POINT pt);
     void SetBrightnessMode(BrightnessMode mode);
+    void SetEnabled(bool enabled);
     void FallbackToSoftwareIfNeeded();
 
     HINSTANCE m_hInstance;
@@ -34,6 +35,7 @@ private:
     std::unique_ptr<PopupView> m_popup;
     UINT m_msgTaskbarCreated = 0;
     BrightnessMode m_brightnessMode = BrightnessMode::Hardware;
+    bool m_isEnabled = true;
     bool m_ddcFallbackBalloonShown = false;
     bool m_trayIconAdded = false;
 };

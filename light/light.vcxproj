@@ -188,9 +188,6 @@
   <ItemGroup>
     <Image Include="src\resources\app.ico" />
   </ItemGroup>
-  <ItemGroup>
-    <None Include=".clang-format" />
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

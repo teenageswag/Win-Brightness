@@ -46,6 +46,7 @@ bool App::Init() {
     }
 
     m_brightnessMode = m_settings.LoadBrightnessMode();
+    m_isEnabled = m_settings.LoadEnabled();
     FallbackToSoftwareIfNeeded();
     m_controller.SetBrightnessMode(m_brightnessMode);
     m_controller.SetBrightness(m_settings.LoadBrightness(m_controller.GetBrightness()));
@@ -58,6 +59,11 @@ bool App::Init() {
     if (!m_popup->Register() || !m_popup->Create()) {
         m_popup.reset();
         return false;
+    }
+
+    // Sync enabled state to popup (without triggering brightness changes on startup)
+    if (!m_isEnabled && m_popup) {
+        m_popup->SetEnabled(false);
     }
 
     SetWindowLongPtr(m_popup->GetHWnd(), GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(m_hMsgWnd));
@@ -141,7 +147,11 @@ void App::UpdateTrayIcon(int percent) {
     nid.hWnd = m_hMsgWnd;
     nid.uID = kTrayIconId;
     nid.uFlags = NIF_TIP;
-    swprintf_s(nid.szTip, L"Brightness: %d%% [%s]", percent, ModeLabel(m_brightnessMode));
+    if (m_isEnabled) {
+        swprintf_s(nid.szTip, L"Brightness: %d%% [%s]", percent, ModeLabel(m_brightnessMode));
+    } else {
+        swprintf_s(nid.szTip, L"Brightness: OFF [%s]", ModeLabel(m_brightnessMode));
+    }
     Shell_NotifyIcon(NIM_MODIFY, &nid);
 }
 
@@ -196,6 +206,16 @@ void App::SetBrightnessMode(BrightnessMode mode) {
     m_controller.SetBrightnessMode(m_brightnessMode);
     m_settings.SaveBrightnessMode(m_brightnessMode);
     UpdateTrayIcon(m_controller.GetBrightness());
+
+    if (m_popup) {
+        m_popup->UpdateFromController();
+    }
+}
+
+void App::SetEnabled(bool enabled) {
+    m_isEnabled = enabled;
+    m_settings.SaveEnabled(enabled);
+    UpdateTrayIcon(m_controller.GetBrightness());
 }
 
 void App::FallbackToSoftwareIfNeeded() {
@@ -234,6 +254,12 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
         const int newPercent = ClampBrightness(static_cast<int>(wParam));
         m_settings.SaveBrightness(newPercent);
         UpdateTrayIcon(newPercent);
+        return 0;
+    }
+
+    case WM_USER_ENABLED_CHANGED: {
+        const bool enabled = wParam != 0;
+        SetEnabled(enabled);
         return 0;
     }
 
