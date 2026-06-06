@@ -25,6 +25,7 @@ private:
     static constexpr int kTrackHeight = 4;
     static constexpr int kThumbRadius = 5;
     static constexpr int kPercentWidth = 44;
+    static constexpr int kToggleWidth = 24;
     static constexpr int kTrackPercentGap = 8;
 
     static constexpr UINT_PTR kAutoHideTimerId = 1;
@@ -47,6 +48,14 @@ private:
     void SetDisplayedBrightness(int percent);
     void NotifyOwnerBrightnessChanged(int percent);
 
-    void GetTrackBounds(int dpi, int& left, int& right, int& centerY) const;
-    int XToPercent(int x, int dpi) const;
+    struct PopupLayout {
+        RECT toggleRect;
+        int trackLeft;
+        int trackRight;
+        int trackCenterY;
+        Gdiplus::RectF percentRect;
+    };
+
+    PopupLayout CalculateLayout(int dpi) const;
+    int XToPercent(int x, const PopupLayout& layout) const;
 };
