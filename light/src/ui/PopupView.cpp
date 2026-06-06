@@ -109,6 +109,13 @@ void PopupView::Hide() {
     ShowWindow(m_hWnd, SW_HIDE);
 }
 
+void PopupView::Refresh() {
+    m_displayBrightness = m_controller.GetBrightness();
+    if (m_hWnd && IsWindowVisible(m_hWnd)) {
+        InvalidateRect(m_hWnd, nullptr, FALSE);
+    }
+}
+
 bool PopupView::IsVisible() const { return m_hWnd && IsWindowVisible(m_hWnd); }
 
 void PopupView::ResetAutoHideTimer() {
@@ -216,7 +223,11 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
             //graphics.FillRectangle(&thumbBrush, thumbX - thumbRadius, trackCenterY - thumbRadius, thumbRadius * 2, thumbRadius * 2);
 
             wchar_t percentText[8];
-            swprintf_s(percentText, L"%d%%", m_displayBrightness);
+            if (m_controller.IsEnabled()) {
+                swprintf_s(percentText, L"%d%%", m_displayBrightness);
+            } else {
+                swprintf_s(percentText, L"Off");
+            }
             FontFamily percentFamily(L"Geist Mono");
             Font percentFont(&percentFamily, 9.0f, FontStyleRegular, UnitPoint);
             SolidBrush textBrush(ToGdiColor(kColorText));
