@@ -18,6 +18,9 @@ public:
     int GetBrightness() const;
     bool SetBrightness(int percent);
 
+    void SetEnabled(bool enabled);
+    bool IsEnabled() const;
+
     void SetBrightnessMode(BrightnessMode mode);
     BrightnessMode GetBrightnessMode() const;
 
@@ -32,7 +35,9 @@ private:
     std::atomic<int> m_currentBrightness{50};
     std::atomic<int> m_brightnessMode{static_cast<int>(BrightnessMode::Hardware)};
     std::atomic<int> m_targetBrightness{-1};
+    std::atomic<bool> m_forceApply{false};
     std::atomic<bool> m_stopWorker{false};
+    std::atomic<bool> m_enabled{true};
     std::atomic<bool> m_initialized{false};
 
     std::thread m_workerThread;
