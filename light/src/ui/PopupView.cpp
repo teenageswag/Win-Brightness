@@ -152,21 +152,39 @@ void PopupView::NotifyOwnerBrightnessChanged(int percent) {
     }
 }
 
-void PopupView::GetTrackBounds(int dpi, int& left, int& right, int& centerY) const {
+PopupView::PopupLayout PopupView::CalculateLayout(int dpi) const {
     RECT clientRect;
     GetClientRect(m_hWnd, &clientRect);
 
-    left = ScaleByDpi(kPadding, dpi);
-    right = clientRect.right - ScaleByDpi(kPadding + kPercentWidth + kTrackPercentGap, dpi);
-    centerY = (clientRect.bottom - clientRect.top) / 2;
+    const int padding = ScaleByDpi(kPadding, dpi);
+    const int trackGap = ScaleByDpi(kTrackPercentGap, dpi);
+    const int toggleWidth = ScaleByDpi(kToggleWidth, dpi);
+    const int percentWidth = ScaleByDpi(kPercentWidth, dpi);
+    const int percentHeight = ScaleByDpi(30, dpi);
+
+    PopupLayout layout{};
+    layout.trackCenterY = (clientRect.bottom - clientRect.top) / 2;
+    layout.toggleRect = {padding, padding, padding + toggleWidth, clientRect.bottom - padding};
+    layout.percentRect = Gdiplus::RectF(static_cast<Gdiplus::REAL>(clientRect.right - padding - percentWidth),
+                                        static_cast<Gdiplus::REAL>(layout.trackCenterY - percentHeight / 2),
+                                        static_cast<Gdiplus::REAL>(percentWidth), static_cast<Gdiplus::REAL>(percentHeight));
+    layout.trackLeft = layout.toggleRect.right + trackGap;
+    layout.trackRight = static_cast<int>(layout.percentRect.X) - trackGap;
+
+    if (layout.trackRight < layout.trackLeft) {
+        layout.trackRight = layout.trackLeft;
+    }
+
+    return layout;
 }
 
-int PopupView::XToPercent(int x, int dpi) const {
-    int left = 0;
-    int right = 0;
-    int centerY = 0;
-    GetTrackBounds(dpi, left, right, centerY);
-    const double ratio = static_cast<double>(x - left) / static_cast<double>(right - left);
+int PopupView::XToPercent(int x, const PopupLayout& layout) const {
+    const int trackWidth = layout.trackRight - layout.trackLeft;
+    if (trackWidth <= 0) {
+        return ClampBrightness(m_displayBrightness);
+    }
+
+    const double ratio = static_cast<double>(x - layout.trackLeft) / static_cast<double>(trackWidth);
     return ClampBrightness(static_cast<int>(std::clamp(ratio, 0.0, 1.0) * 99.0 + 1.0));
 }
 
@@ -194,26 +212,23 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
             graphics.DrawRectangle(&borderPen, 0, 0, width - 1, height - 1);
 
             const int dpi = GetDpiForHwnd(hWnd);
-            int trackLeft = 0;
-            int trackRight = 0;
-            int trackCenterY = 0;
-            GetTrackBounds(dpi, trackLeft, trackRight, trackCenterY);
+            const PopupLayout layout = CalculateLayout(dpi);
             const int trackHeight = ScaleByDpi(kTrackHeight, dpi);
             const double ratio = m_displayBrightness / 100.0;
-            const int thumbX = trackLeft + static_cast<int>((trackRight - trackLeft) * ratio);
+            const int thumbX = layout.trackLeft + static_cast<int>((layout.trackRight - layout.trackLeft) * ratio);
 
             Pen inactiveTrack(ToGdiColor(kColorMidBorder), static_cast<REAL>(trackHeight));
-            graphics.DrawLine(&inactiveTrack, static_cast<REAL>(trackLeft), static_cast<REAL>(trackCenterY), static_cast<REAL>(trackRight),
-                              static_cast<REAL>(trackCenterY));
+            graphics.DrawLine(&inactiveTrack, static_cast<REAL>(layout.trackLeft), static_cast<REAL>(layout.trackCenterY),
+                              static_cast<REAL>(layout.trackRight), static_cast<REAL>(layout.trackCenterY));
 
             Pen activeTrack(ToGdiColor(kColorText), static_cast<REAL>(trackHeight));
-            graphics.DrawLine(&activeTrack, static_cast<REAL>(trackLeft), static_cast<REAL>(trackCenterY), static_cast<REAL>(thumbX),
-                              static_cast<REAL>(trackCenterY));
+            graphics.DrawLine(&activeTrack, static_cast<REAL>(layout.trackLeft), static_cast<REAL>(layout.trackCenterY),
+                              static_cast<REAL>(thumbX), static_cast<REAL>(layout.trackCenterY));
 
             // info: uncomment if u need thumb cube
             //const int thumbRadius = ScaleByDpi(kThumbRadius, dpi);
             //SolidBrush thumbBrush(ToGdiColor(kColorText));
-            //graphics.FillRectangle(&thumbBrush, thumbX - thumbRadius, trackCenterY - thumbRadius, thumbRadius * 2, thumbRadius * 2);
+            //graphics.FillRectangle(&thumbBrush, thumbX - thumbRadius, layout.trackCenterY - thumbRadius, thumbRadius * 2, thumbRadius * 2);
 
             wchar_t percentText[8];
             swprintf_s(percentText, L"%d%%", m_displayBrightness);
@@ -224,12 +239,7 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
             percentFormat.SetAlignment(StringAlignmentNear);
             percentFormat.SetLineAlignment(StringAlignmentCenter);
 
-            // fixme: костыльно выравниваем текст, чтобы он был ровно между краем окна и слайдером. лучше бы делать это динамически
-            int customGap = ScaleByDpi(19, dpi);
-
-            RectF percentRect(static_cast<REAL>(trackRight + customGap), static_cast<REAL>(trackCenterY - ScaleByDpi(15, dpi)),
-                              static_cast<REAL>(ScaleByDpi(kPercentWidth, dpi)), static_cast<REAL>(ScaleByDpi(30, dpi)));
-            graphics.DrawString(percentText, -1, &percentFont, percentRect, &percentFormat, &textBrush);
+            graphics.DrawString(percentText, -1, &percentFont, layout.percentRect, &percentFormat, &textBrush);
 
             BitBlt(paintDc, 0, 0, width, height, memoryDc.Get(), 0, 0, SRCCOPY);
         }
@@ -241,16 +251,13 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
     case WM_LBUTTONDOWN: {
         const int dpi = GetDpiForHwnd(hWnd);
         POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-        int trackLeft = 0;
-        int trackRight = 0;
-        int trackCenterY = 0;
-        GetTrackBounds(dpi, trackLeft, trackRight, trackCenterY);
+        const PopupLayout layout = CalculateLayout(dpi);
         const int pad = ScaleByDpi(kThumbRadius + 4, dpi);
-        if (point.x >= trackLeft - pad && point.x <= trackRight + pad && point.y >= trackCenterY - ScaleByDpi(16, dpi) &&
-            point.y <= trackCenterY + ScaleByDpi(16, dpi)) {
+        if (point.x >= layout.trackLeft - pad && point.x <= layout.trackRight + pad && point.y >= layout.trackCenterY - ScaleByDpi(16, dpi) &&
+            point.y <= layout.trackCenterY + ScaleByDpi(16, dpi)) {
             m_isDragging = true;
             SetCapture(hWnd);
-            SetDisplayedBrightness(XToPercent(point.x, dpi));
+            SetDisplayedBrightness(XToPercent(point.x, layout));
             ResetDebounceTimer();
             ResetAutoHideTimer();
         }
@@ -263,7 +270,8 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
         }
 
         const int dpi = GetDpiForHwnd(hWnd);
-        SetDisplayedBrightness(XToPercent(GET_X_LPARAM(lParam), dpi));
+        const PopupLayout layout = CalculateLayout(dpi);
+        SetDisplayedBrightness(XToPercent(GET_X_LPARAM(lParam), layout));
         ResetDebounceTimer();
         ResetAutoHideTimer();
         return 0;
