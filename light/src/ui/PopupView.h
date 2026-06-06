@@ -38,11 +38,12 @@ private:
     bool m_isDragging = false;
     ULONGLONG m_showTime = 0;
     int m_displayBrightness = 50;
-    bool m_hasPendingBrightness = false;
+    bool m_hasPendingSave = false;
 
     void ResetAutoHideTimer();
-    void ResetDebounceTimer();
-    void CommitPendingBrightness();
+    void ApplyBrightnessImmediately();
+    void SaveBrightnessDebounced();
+    void SaveBrightnessNow();
     void SetDisplayedBrightness(int percent);
     void NotifyOwnerBrightnessChanged(int percent);
 
