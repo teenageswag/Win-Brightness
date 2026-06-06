@@ -10,6 +10,9 @@ public:
     int LoadBrightness(int fallbackPercent) const;
     void SaveBrightness(int percent) const;
 
+    bool LoadBrightnessEnabled() const;
+    void SaveBrightnessEnabled(bool enabled) const;
+
     bool IsAutostartEnabled() const;
     void SetAutostartEnabled(bool enabled) const;
 

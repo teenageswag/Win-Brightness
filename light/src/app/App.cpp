@@ -48,6 +48,7 @@ bool App::Init() {
     m_brightnessMode = m_settings.LoadBrightnessMode();
     FallbackToSoftwareIfNeeded();
     m_controller.SetBrightnessMode(m_brightnessMode);
+    m_controller.SetEnabled(m_settings.LoadBrightnessEnabled());
     m_controller.SetBrightness(m_settings.LoadBrightness(m_controller.GetBrightness()));
 
     if (!CreateMsgWindow()) {
@@ -110,7 +111,8 @@ void App::AddTrayIcon() {
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_USER_SHELLICON;
     nid.hIcon = m_hAppIcon;
-    swprintf_s(nid.szTip, L"Brightness: %d%% [%s]", m_controller.GetBrightness(), ModeLabel(m_brightnessMode));
+    swprintf_s(nid.szTip, L"Brightness: %d%% [%s, %s]", m_controller.GetBrightness(), ModeLabel(m_brightnessMode),
+               m_controller.IsEnabled() ? L"On" : L"Off");
 
     if (Shell_NotifyIcon(NIM_ADD, &nid)) {
         m_trayIconAdded = true;
@@ -141,7 +143,7 @@ void App::UpdateTrayIcon(int percent) {
     nid.hWnd = m_hMsgWnd;
     nid.uID = kTrayIconId;
     nid.uFlags = NIF_TIP;
-    swprintf_s(nid.szTip, L"Brightness: %d%% [%s]", percent, ModeLabel(m_brightnessMode));
+    swprintf_s(nid.szTip, L"Brightness: %d%% [%s, %s]", percent, ModeLabel(m_brightnessMode), m_controller.IsEnabled() ? L"On" : L"Off");
     Shell_NotifyIcon(NIM_MODIFY, &nid);
 }
 
@@ -175,7 +177,10 @@ void App::ShowContextMenu(POINT pt) {
         return;
     }
 
+    const UINT enabledState = m_controller.IsEnabled() ? MF_CHECKED : MF_UNCHECKED;
     const UINT autoState = m_settings.IsAutostartEnabled() ? MF_CHECKED : MF_UNCHECKED;
+    AppendMenu(hMenu, MF_STRING | enabledState, ID_MENU_ENABLED, L"Brightness enabled");
+    AppendMenu(hMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenu(hMenu, MF_STRING | autoState, ID_MENU_AUTOSTART, L"Run at startup");
     AppendMenu(hMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenu(hModeMenu, MF_STRING | (m_brightnessMode == BrightnessMode::Hardware ? MF_CHECKED : MF_UNCHECKED), ID_MENU_MODE_HARDWARE, L"Hardware");
@@ -196,6 +201,18 @@ void App::SetBrightnessMode(BrightnessMode mode) {
     m_controller.SetBrightnessMode(m_brightnessMode);
     m_settings.SaveBrightnessMode(m_brightnessMode);
     UpdateTrayIcon(m_controller.GetBrightness());
+    if (m_popup) {
+        m_popup->Refresh();
+    }
+}
+
+void App::SetBrightnessEnabled(bool enabled) {
+    m_controller.SetEnabled(enabled);
+    m_settings.SaveBrightnessEnabled(enabled);
+    UpdateTrayIcon(m_controller.GetBrightness());
+    if (m_popup) {
+        m_popup->Refresh();
+    }
 }
 
 void App::FallbackToSoftwareIfNeeded() {
@@ -247,6 +264,9 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
 
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
+        case ID_MENU_ENABLED:
+            SetBrightnessEnabled(!m_controller.IsEnabled());
+            break;
         case ID_MENU_AUTOSTART:
             m_settings.SetAutostartEnabled(!m_settings.IsAutostartEnabled());
             break;
