@@ -24,6 +24,7 @@ private:
     void ShowDdcFallbackBalloonOnce();
     void ShowContextMenu(POINT pt);
     void SetBrightnessMode(BrightnessMode mode);
+    void SetBrightnessEnabled(bool enabled);
     void FallbackToSoftwareIfNeeded();
 
     HINSTANCE m_hInstance;

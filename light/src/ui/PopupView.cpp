@@ -101,12 +101,17 @@ void PopupView::Hide() {
         return;
     }
 
-    if (m_hasPendingBrightness) {
-        CommitPendingBrightness();
-    }
+    SaveBrightnessNow();
     KillTimer(m_hWnd, kAutoHideTimerId);
     KillTimer(m_hWnd, kDebounceTimerId);
     ShowWindow(m_hWnd, SW_HIDE);
+}
+
+void PopupView::Refresh() {
+    m_displayBrightness = m_controller.GetBrightness();
+    if (m_hWnd && IsWindowVisible(m_hWnd)) {
+        InvalidateRect(m_hWnd, nullptr, FALSE);
+    }
 }
 
 bool PopupView::IsVisible() const { return m_hWnd && IsWindowVisible(m_hWnd); }
@@ -117,22 +122,25 @@ void PopupView::ResetAutoHideTimer() {
     }
 }
 
-void PopupView::ResetDebounceTimer() {
+void PopupView::ApplyBrightnessImmediately() {
+    m_controller.SetBrightness(m_displayBrightness);
+}
+
+void PopupView::SaveBrightnessDebounced() {
     if (m_hWnd) {
-        m_hasPendingBrightness = true;
+        m_hasPendingSave = true;
         KillTimer(m_hWnd, kDebounceTimerId);
         SetTimer(m_hWnd, kDebounceTimerId, kDebounceDelayMs, nullptr);
     }
 }
 
-void PopupView::CommitPendingBrightness() {
-    if (!m_hasPendingBrightness) {
+void PopupView::SaveBrightnessNow() {
+    if (!m_hasPendingSave) {
         return;
     }
 
-    m_hasPendingBrightness = false;
+    m_hasPendingSave = false;
     KillTimer(m_hWnd, kDebounceTimerId);
-    m_controller.SetBrightness(m_displayBrightness);
     NotifyOwnerBrightnessChanged(m_displayBrightness);
 }
 
@@ -143,6 +151,7 @@ void PopupView::SetDisplayedBrightness(int percent) {
     }
 
     m_displayBrightness = clamped;
+    ApplyBrightnessImmediately();
     InvalidateRect(m_hWnd, nullptr, FALSE);
 }
 
@@ -231,7 +240,11 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
             //graphics.FillRectangle(&thumbBrush, thumbX - thumbRadius, layout.trackCenterY - thumbRadius, thumbRadius * 2, thumbRadius * 2);
 
             wchar_t percentText[8];
-            swprintf_s(percentText, L"%d%%", m_displayBrightness);
+            if (m_controller.IsEnabled()) {
+                swprintf_s(percentText, L"%d%%", m_displayBrightness);
+            } else {
+                swprintf_s(percentText, L"Off");
+            }
             FontFamily percentFamily(L"Geist Mono");
             Font percentFont(&percentFamily, 9.0f, FontStyleRegular, UnitPoint);
             SolidBrush textBrush(ToGdiColor(kColorText));
@@ -257,8 +270,8 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
             point.y <= layout.trackCenterY + ScaleByDpi(16, dpi)) {
             m_isDragging = true;
             SetCapture(hWnd);
-            SetDisplayedBrightness(XToPercent(point.x, layout));
-            ResetDebounceTimer();
+            SetDisplayedBrightness(XToPercent(point.x, dpi));
+            SaveBrightnessDebounced();
             ResetAutoHideTimer();
         }
         return 0;
@@ -270,9 +283,8 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
         }
 
         const int dpi = GetDpiForHwnd(hWnd);
-        const PopupLayout layout = CalculateLayout(dpi);
-        SetDisplayedBrightness(XToPercent(GET_X_LPARAM(lParam), layout));
-        ResetDebounceTimer();
+        SetDisplayedBrightness(XToPercent(GET_X_LPARAM(lParam), dpi));
+        SaveBrightnessDebounced();
         ResetAutoHideTimer();
         return 0;
     }
@@ -281,14 +293,14 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
         if (m_isDragging) {
             m_isDragging = false;
             ReleaseCapture();
-            ResetDebounceTimer();
+            SaveBrightnessDebounced();
         }
         return 0;
 
     case WM_MOUSEWHEEL: {
         const int delta = GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? 1 : -1;
         SetDisplayedBrightness(m_displayBrightness + delta);
-        ResetDebounceTimer();
+        SaveBrightnessDebounced();
         ResetAutoHideTimer();
         return 0;
     }
@@ -306,7 +318,7 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
             return 0;
         }
         if (wParam == kDebounceTimerId) {
-            CommitPendingBrightness();
+            SaveBrightnessNow();
             return 0;
         }
         break;
