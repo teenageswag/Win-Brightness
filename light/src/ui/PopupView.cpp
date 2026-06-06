@@ -101,9 +101,7 @@ void PopupView::Hide() {
         return;
     }
 
-    if (m_hasPendingBrightness) {
-        CommitPendingBrightness();
-    }
+    SaveBrightnessNow();
     KillTimer(m_hWnd, kAutoHideTimerId);
     KillTimer(m_hWnd, kDebounceTimerId);
     ShowWindow(m_hWnd, SW_HIDE);
@@ -117,22 +115,25 @@ void PopupView::ResetAutoHideTimer() {
     }
 }
 
-void PopupView::ResetDebounceTimer() {
+void PopupView::ApplyBrightnessImmediately() {
+    m_controller.SetBrightness(m_displayBrightness);
+}
+
+void PopupView::SaveBrightnessDebounced() {
     if (m_hWnd) {
-        m_hasPendingBrightness = true;
+        m_hasPendingSave = true;
         KillTimer(m_hWnd, kDebounceTimerId);
         SetTimer(m_hWnd, kDebounceTimerId, kDebounceDelayMs, nullptr);
     }
 }
 
-void PopupView::CommitPendingBrightness() {
-    if (!m_hasPendingBrightness) {
+void PopupView::SaveBrightnessNow() {
+    if (!m_hasPendingSave) {
         return;
     }
 
-    m_hasPendingBrightness = false;
+    m_hasPendingSave = false;
     KillTimer(m_hWnd, kDebounceTimerId);
-    m_controller.SetBrightness(m_displayBrightness);
     NotifyOwnerBrightnessChanged(m_displayBrightness);
 }
 
@@ -143,6 +144,7 @@ void PopupView::SetDisplayedBrightness(int percent) {
     }
 
     m_displayBrightness = clamped;
+    ApplyBrightnessImmediately();
     InvalidateRect(m_hWnd, nullptr, FALSE);
 }
 
@@ -251,7 +253,7 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
             m_isDragging = true;
             SetCapture(hWnd);
             SetDisplayedBrightness(XToPercent(point.x, dpi));
-            ResetDebounceTimer();
+            SaveBrightnessDebounced();
             ResetAutoHideTimer();
         }
         return 0;
@@ -264,7 +266,7 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
 
         const int dpi = GetDpiForHwnd(hWnd);
         SetDisplayedBrightness(XToPercent(GET_X_LPARAM(lParam), dpi));
-        ResetDebounceTimer();
+        SaveBrightnessDebounced();
         ResetAutoHideTimer();
         return 0;
     }
@@ -273,14 +275,14 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
         if (m_isDragging) {
             m_isDragging = false;
             ReleaseCapture();
-            ResetDebounceTimer();
+            SaveBrightnessDebounced();
         }
         return 0;
 
     case WM_MOUSEWHEEL: {
         const int delta = GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? 1 : -1;
         SetDisplayedBrightness(m_displayBrightness + delta);
-        ResetDebounceTimer();
+        SaveBrightnessDebounced();
         ResetAutoHideTimer();
         return 0;
     }
@@ -298,7 +300,7 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
             return 0;
         }
         if (wParam == kDebounceTimerId) {
-            CommitPendingBrightness();
+            SaveBrightnessNow();
             return 0;
         }
         break;
