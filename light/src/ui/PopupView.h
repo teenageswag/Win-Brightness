@@ -18,13 +18,15 @@ public:
     LRESULT HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 private:
-    static constexpr int kBaseWidth = 232;
+    static constexpr int kBaseWidth = 264;
     static constexpr int kBaseHeight = 40;
     static constexpr int kPadding = 10;
     static constexpr int kTrackHeight = 4;
     static constexpr int kThumbRadius = 5;
     static constexpr int kPercentWidth = 44;
     static constexpr int kTrackPercentGap = 8;
+    static constexpr int kToggleSize = 14;
+    static constexpr int kToggleTrackGap = 10;
 
     static constexpr UINT_PTR kAutoHideTimerId = 1;
     static constexpr UINT_PTR kDebounceTimerId = 2;
@@ -38,13 +40,16 @@ private:
     ULONGLONG m_showTime = 0;
     int m_displayBrightness = 50;
     bool m_hasPendingBrightness = false;
+    bool m_displayEnabled = true;
 
     void ResetAutoHideTimer();
     void ResetDebounceTimer();
     void CommitPendingBrightness();
     void SetDisplayedBrightness(int percent);
     void NotifyOwnerBrightnessChanged(int percent);
+    void NotifyOwnerEnabledChanged(bool enabled);
 
+    RECT GetToggleBounds(int dpi) const;
     void GetTrackBounds(int dpi, int& left, int& right, int& centerY) const;
     int XToPercent(int x, int dpi) const;
 };

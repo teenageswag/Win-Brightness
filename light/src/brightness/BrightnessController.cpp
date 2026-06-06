@@ -39,9 +39,34 @@ int BrightnessController::GetBrightness() const { return m_currentBrightness.loa
 bool BrightnessController::SetBrightness(int percent) {
     const int clamped = ClampBrightness(percent);
     m_currentBrightness.store(clamped, std::memory_order_relaxed);
+
+    if (!IsEnabled()) {
+        m_targetBrightness.store(-1, std::memory_order_release);
+        m_software.Reset();
+        return true;
+    }
+
     m_targetBrightness.store(clamped, std::memory_order_release);
     m_workerCv.notify_one();
     return true;
+}
+
+void BrightnessController::SetEnabled(bool enabled) {
+    const bool wasEnabled = m_brightnessEnabled.exchange(enabled, std::memory_order_acq_rel);
+
+    if (!enabled) {
+        m_targetBrightness.store(-1, std::memory_order_release);
+        m_software.Reset();
+        return;
+    }
+
+    if (!wasEnabled) {
+        SetBrightness(GetBrightness());
+    }
+}
+
+bool BrightnessController::IsEnabled() const {
+    return m_brightnessEnabled.load(std::memory_order_acquire);
 }
 
 void BrightnessController::SetBrightnessMode(BrightnessMode mode) {
@@ -65,8 +90,6 @@ bool BrightnessController::IsHardwareAvailable() const {
 }
 
 void BrightnessController::WorkerThreadProc() {
-    int lastApplied = -1;
-
     while (true) {
         int target = -1;
         {
@@ -85,11 +108,10 @@ void BrightnessController::WorkerThreadProc() {
             target = latest;
         }
 
-        if (target == -1 || target == lastApplied) {
+        if (target == -1) {
             continue;
         }
 
-        lastApplied = target;
         ApplyBrightness(target, GetBrightnessMode());
     }
 
@@ -97,6 +119,11 @@ void BrightnessController::WorkerThreadProc() {
 }
 
 void BrightnessController::ApplyBrightness(int level, BrightnessMode mode) {
+    if (!IsEnabled()) {
+        m_software.Reset();
+        return;
+    }
+
     const int clamped = ClampBrightness(level);
 
     if (mode == BrightnessMode::Hardware && m_hardware.ApplyBrightness(clamped)) {

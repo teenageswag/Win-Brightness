@@ -47,6 +47,7 @@ bool App::Init() {
 
     m_brightnessMode = m_settings.LoadBrightnessMode();
     FallbackToSoftwareIfNeeded();
+    m_controller.SetEnabled(m_settings.LoadEnabled());
     m_controller.SetBrightnessMode(m_brightnessMode);
     m_controller.SetBrightness(m_settings.LoadBrightness(m_controller.GetBrightness()));
 
@@ -110,7 +111,7 @@ void App::AddTrayIcon() {
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_USER_SHELLICON;
     nid.hIcon = m_hAppIcon;
-    swprintf_s(nid.szTip, L"Brightness: %d%% [%s]", m_controller.GetBrightness(), ModeLabel(m_brightnessMode));
+    swprintf_s(nid.szTip, L"Brightness: %d%% [%s] %s", m_controller.GetBrightness(), ModeLabel(m_brightnessMode), m_controller.IsEnabled() ? L"On" : L"Off");
 
     if (Shell_NotifyIcon(NIM_ADD, &nid)) {
         m_trayIconAdded = true;
@@ -141,7 +142,7 @@ void App::UpdateTrayIcon(int percent) {
     nid.hWnd = m_hMsgWnd;
     nid.uID = kTrayIconId;
     nid.uFlags = NIF_TIP;
-    swprintf_s(nid.szTip, L"Brightness: %d%% [%s]", percent, ModeLabel(m_brightnessMode));
+    swprintf_s(nid.szTip, L"Brightness: %d%% [%s] %s", percent, ModeLabel(m_brightnessMode), m_controller.IsEnabled() ? L"On" : L"Off");
     Shell_NotifyIcon(NIM_MODIFY, &nid);
 }
 
@@ -234,6 +235,14 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
         const int newPercent = ClampBrightness(static_cast<int>(wParam));
         m_settings.SaveBrightness(newPercent);
         UpdateTrayIcon(newPercent);
+        return 0;
+    }
+
+    case WM_USER_ENABLED_CHANGED: {
+        const bool enabled = wParam != FALSE;
+        m_controller.SetEnabled(enabled);
+        m_settings.SaveEnabled(enabled);
+        UpdateTrayIcon(m_controller.GetBrightness());
         return 0;
     }
 

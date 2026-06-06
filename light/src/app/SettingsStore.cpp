@@ -7,6 +7,7 @@ namespace {
     constexpr const wchar_t* kLegacySettingsKey = L"Software\\LightBrightness";
     constexpr const wchar_t* kModeValue = L"DimmingMode";
     constexpr const wchar_t* kBrightnessValue = L"Brightness";
+    constexpr const wchar_t* kEnabledValue = L"Enabled";
     constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
     constexpr const wchar_t* kRunValue = L"LightBrightness";
 } // namespace
@@ -50,6 +51,22 @@ void SettingsStore::SaveBrightness(int percent) const {
 
     const DWORD value = static_cast<DWORD>(ClampBrightness(percent));
     RegSetValueEx(key.Get(), kBrightnessValue, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value));
+}
+
+bool SettingsStore::LoadEnabled() const {
+    DWORD value = 1;
+    TryReadDword(kSettingsKey, kEnabledValue, value);
+    return value != 0;
+}
+
+void SettingsStore::SaveEnabled(bool enabled) const {
+    RegistryKey key;
+    if (RegCreateKeyEx(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, key.Put(), nullptr) != ERROR_SUCCESS) {
+        return;
+    }
+
+    const DWORD value = enabled ? 1 : 0;
+    RegSetValueEx(key.Get(), kEnabledValue, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value));
 }
 
 bool SettingsStore::IsAutostartEnabled() const {

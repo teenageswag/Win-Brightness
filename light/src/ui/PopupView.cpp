@@ -31,6 +31,7 @@ namespace {
 
 PopupView::PopupView(HINSTANCE hInstance, BrightnessController& controller) : m_hInstance(hInstance), m_controller(controller) {
     m_displayBrightness = m_controller.GetBrightness();
+    m_displayEnabled = m_controller.IsEnabled();
 }
 
 PopupView::~PopupView() {
@@ -72,6 +73,7 @@ void PopupView::Toggle(POINT cursorPt) {
     }
 
     m_displayBrightness = m_controller.GetBrightness();
+    m_displayEnabled = m_controller.IsEnabled();
 
     const int dpi = GetDpiForPoint(cursorPt);
     const int width = ScaleByDpi(kBaseWidth, dpi);
@@ -152,11 +154,27 @@ void PopupView::NotifyOwnerBrightnessChanged(int percent) {
     }
 }
 
+void PopupView::NotifyOwnerEnabledChanged(bool enabled) {
+    if (HWND owner = GetWindow(m_hWnd, GW_OWNER)) {
+        PostMessage(owner, WM_USER_ENABLED_CHANGED, enabled ? TRUE : FALSE, 0);
+    }
+}
+
+RECT PopupView::GetToggleBounds(int dpi) const {
+    RECT clientRect;
+    GetClientRect(m_hWnd, &clientRect);
+
+    const int size = ScaleByDpi(kToggleSize, dpi);
+    const int left = ScaleByDpi(kPadding, dpi);
+    const int top = ((clientRect.bottom - clientRect.top) - size) / 2;
+    return RECT{left, top, left + size, top + size};
+}
+
 void PopupView::GetTrackBounds(int dpi, int& left, int& right, int& centerY) const {
     RECT clientRect;
     GetClientRect(m_hWnd, &clientRect);
 
-    left = ScaleByDpi(kPadding, dpi);
+    left = ScaleByDpi(kPadding + kToggleSize + kToggleTrackGap, dpi);
     right = clientRect.right - ScaleByDpi(kPadding + kPercentWidth + kTrackPercentGap, dpi);
     centerY = (clientRect.bottom - clientRect.top) / 2;
 }
@@ -194,6 +212,23 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
             graphics.DrawRectangle(&borderPen, 0, 0, width - 1, height - 1);
 
             const int dpi = GetDpiForHwnd(hWnd);
+            const RECT toggleRect = GetToggleBounds(dpi);
+            Pen toggleBorderPen(ToGdiColor(m_displayEnabled ? kColorText : kColorMidBorder), 1.0f);
+            SolidBrush toggleFillBrush(ToGdiColor(kColorBackground));
+            graphics.FillRectangle(&toggleFillBrush, toggleRect.left, toggleRect.top, toggleRect.right - toggleRect.left, toggleRect.bottom - toggleRect.top);
+            graphics.DrawRectangle(&toggleBorderPen, toggleRect.left, toggleRect.top, toggleRect.right - toggleRect.left, toggleRect.bottom - toggleRect.top);
+            if (m_displayEnabled) {
+                Pen checkPen(ToGdiColor(kColorText), 1.0f);
+                const REAL x1 = static_cast<REAL>(toggleRect.left + ScaleByDpi(3, dpi));
+                const REAL y1 = static_cast<REAL>(toggleRect.top + ScaleByDpi(7, dpi));
+                const REAL x2 = static_cast<REAL>(toggleRect.left + ScaleByDpi(6, dpi));
+                const REAL y2 = static_cast<REAL>(toggleRect.top + ScaleByDpi(10, dpi));
+                const REAL x3 = static_cast<REAL>(toggleRect.left + ScaleByDpi(11, dpi));
+                const REAL y3 = static_cast<REAL>(toggleRect.top + ScaleByDpi(4, dpi));
+                graphics.DrawLine(&checkPen, x1, y1, x2, y2);
+                graphics.DrawLine(&checkPen, x2, y2, x3, y3);
+            }
+
             int trackLeft = 0;
             int trackRight = 0;
             int trackCenterY = 0;
@@ -241,6 +276,31 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
     case WM_LBUTTONDOWN: {
         const int dpi = GetDpiForHwnd(hWnd);
         POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        const RECT toggleRect = GetToggleBounds(dpi);
+        if (point.x >= toggleRect.left && point.x <= toggleRect.right && point.y >= toggleRect.top && point.y <= toggleRect.bottom) {
+            const bool nextEnabled = !m_displayEnabled;
+            if (m_hasPendingBrightness) {
+                m_hasPendingBrightness = false;
+                KillTimer(m_hWnd, kDebounceTimerId);
+                if (!nextEnabled) {
+                    m_controller.SetEnabled(false);
+                    m_controller.SetBrightness(m_displayBrightness);
+                } else {
+                    m_controller.SetBrightness(m_displayBrightness);
+                    m_controller.SetEnabled(true);
+                }
+                NotifyOwnerBrightnessChanged(m_displayBrightness);
+            } else {
+                m_controller.SetEnabled(nextEnabled);
+            }
+
+            m_displayEnabled = nextEnabled;
+            NotifyOwnerEnabledChanged(m_displayEnabled);
+            InvalidateRect(hWnd, nullptr, FALSE);
+            ResetAutoHideTimer();
+            return 0;
+        }
+
         int trackLeft = 0;
         int trackRight = 0;
         int trackCenterY = 0;
