@@ -12,6 +12,7 @@ public:
     bool Create();
     void Toggle(POINT cursorPt);
     void Hide();
+    void RefreshFromController();
     bool IsVisible() const;
     HWND GetHWnd() const { return m_hWnd; }
 

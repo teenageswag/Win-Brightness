@@ -145,6 +145,12 @@ void App::UpdateTrayIcon(int percent) {
     Shell_NotifyIcon(NIM_MODIFY, &nid);
 }
 
+void App::RefreshVisiblePopup() {
+    if (m_popup && m_popup->IsVisible()) {
+        m_popup->RefreshFromController();
+    }
+}
+
 void App::ShowDdcFallbackBalloonOnce() {
     if (!m_hMsgWnd || !m_trayIconAdded || m_ddcFallbackBalloonShown) {
         return;
@@ -194,6 +200,7 @@ void App::SetBrightnessMode(BrightnessMode mode) {
     m_brightnessMode = mode;
     FallbackToSoftwareIfNeeded();
     m_controller.SetBrightnessMode(m_brightnessMode);
+    RefreshVisiblePopup();
     m_settings.SaveBrightnessMode(m_brightnessMode);
     UpdateTrayIcon(m_controller.GetBrightness());
 }
@@ -241,6 +248,7 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
         m_controller.RefreshMonitors();
         FallbackToSoftwareIfNeeded();
         m_controller.SetBrightnessMode(m_brightnessMode);
+        RefreshVisiblePopup();
         m_settings.SaveBrightnessMode(m_brightnessMode);
         UpdateTrayIcon(m_controller.GetBrightness());
         return 0;
@@ -249,6 +257,7 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
         switch (LOWORD(wParam)) {
         case ID_MENU_AUTOSTART:
             m_settings.SetAutostartEnabled(!m_settings.IsAutostartEnabled());
+            RefreshVisiblePopup();
             break;
         case ID_MENU_MODE_HARDWARE:
             SetBrightnessMode(BrightnessMode::Hardware);

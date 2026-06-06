@@ -21,6 +21,7 @@ private:
     void AddTrayIcon();
     void RemoveTrayIcon();
     void UpdateTrayIcon(int percent);
+    void RefreshVisiblePopup();
     void ShowDdcFallbackBalloonOnce();
     void ShowContextMenu(POINT pt);
     void SetBrightnessMode(BrightnessMode mode);

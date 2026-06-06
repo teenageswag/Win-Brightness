@@ -71,7 +71,7 @@ void PopupView::Toggle(POINT cursorPt) {
         return;
     }
 
-    m_displayBrightness = m_controller.GetBrightness();
+    RefreshFromController();
 
     const int dpi = GetDpiForPoint(cursorPt);
     const int width = ScaleByDpi(kBaseWidth, dpi);
@@ -110,6 +110,17 @@ void PopupView::Hide() {
 }
 
 bool PopupView::IsVisible() const { return m_hWnd && IsWindowVisible(m_hWnd); }
+
+void PopupView::RefreshFromController() {
+    if (m_hasPendingBrightness) {
+        CommitPendingBrightness();
+    }
+
+    m_displayBrightness = ClampBrightness(m_controller.GetBrightness());
+    if (m_hWnd) {
+        InvalidateRect(m_hWnd, nullptr, FALSE);
+    }
+}
 
 void PopupView::ResetAutoHideTimer() {
     if (m_hWnd && IsWindowVisible(m_hWnd)) {
