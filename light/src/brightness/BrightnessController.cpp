@@ -90,18 +90,29 @@ bool BrightnessController::IsHardwareAvailable() const {
 
 void BrightnessController::WorkerThreadProc() {
     int lastApplied = -1;
+    int lastAppliedMode = -1;
 
     while (true) {
         int target = -1;
+        bool forceApply = false;
         {
             std::unique_lock<std::mutex> lock(m_workerMutex);
-            m_workerCv.wait(lock, [this] { return m_stopWorker.load(std::memory_order_acquire) || m_targetBrightness.load(std::memory_order_acquire) != -1; });
+            m_workerCv.wait(lock, [this] {
+                return m_stopWorker.load(std::memory_order_acquire) ||
+                       m_forceApply.load(std::memory_order_acquire) ||
+                       m_targetBrightness.load(std::memory_order_acquire) != -1;
+            });
 
             if (m_stopWorker.load(std::memory_order_acquire)) {
                 break;
             }
 
+            forceApply = m_forceApply.exchange(false, std::memory_order_acq_rel);
             target = m_targetBrightness.exchange(-1, std::memory_order_acq_rel);
+        }
+
+        if (m_forceApply.exchange(false, std::memory_order_acq_rel)) {
+            forceApply = true;
         }
 
         const int latest = m_targetBrightness.exchange(-1, std::memory_order_acq_rel);
@@ -109,12 +120,23 @@ void BrightnessController::WorkerThreadProc() {
             target = latest;
         }
 
-        if (target == -1 || target == lastApplied) {
+        if (target == -1 && forceApply) {
+            target = GetBrightness();
+        }
+
+        if (target == -1) {
+            continue;
+        }
+
+        const BrightnessMode mode = GetBrightnessMode();
+        const int modeValue = static_cast<int>(mode);
+        if (!forceApply && target == lastApplied && modeValue == lastAppliedMode) {
             continue;
         }
 
         lastApplied = target;
-        ApplyBrightness(target, GetBrightnessMode());
+        lastAppliedMode = modeValue;
+        ApplyBrightness(target, mode);
     }
 
     m_software.Reset();

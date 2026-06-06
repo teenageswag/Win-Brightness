@@ -35,6 +35,7 @@ private:
     std::atomic<int> m_currentBrightness{50};
     std::atomic<int> m_brightnessMode{static_cast<int>(BrightnessMode::Hardware)};
     std::atomic<int> m_targetBrightness{-1};
+    std::atomic<bool> m_forceApply{false};
     std::atomic<bool> m_stopWorker{false};
     std::atomic<bool> m_enabled{true};
     std::atomic<bool> m_initialized{false};
