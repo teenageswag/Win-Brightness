@@ -22,25 +22,44 @@ public:
     LRESULT HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 private:
-    static constexpr int kBaseWidth = 280;
     static constexpr int kBaseHeight = 40;
-    static constexpr int kPadding = 10;
-    static constexpr int kTrackHeight = 4;
-    static constexpr int kThumbRadius = 5;
-    static constexpr int kPercentWidth = 44;
-    static constexpr int kTrackPercentGap = 8;
+    static constexpr int kBasePaddingH = 14;
+    static constexpr int kBasePaddingV = 8;
 
-    // Toggle switch dimensions
-    static constexpr int kToggleWidth = 28;
-    static constexpr int kToggleHeight = 14;
-    static constexpr int kToggleThumbSize = 10;
-    static constexpr int kToggleLeftMargin = 10;
-    static constexpr int kToggleTrackGap = 10;
+    static constexpr int kBaseToggleW = 28;
+    static constexpr int kBaseToggleH = 14;
+    static constexpr int kBaseToggleThumb = 10;
+
+    static constexpr int kBaseToggleTrackGap = 10;
+
+    static constexpr int kBaseTrackH = 4;
+    static constexpr int kBaseThumbRadius = 5;
+
+    static constexpr int kBaseTrackLabelGap = 8;
+
+    static constexpr int kBaseLabelW = 38;
+
+    static constexpr int kBaseWidth = 280;
 
     static constexpr UINT_PTR kAutoHideTimerId = 1;
     static constexpr UINT_PTR kDebounceTimerId = 2;
     static constexpr DWORD kAutoHideDelayMs = 5555;
     static constexpr DWORD kDebounceDelayMs = 80;
+
+    struct Layout {
+        int centerY = 0;
+
+        RECT toggle{};
+
+        int trackLeft = 0;
+        int trackRight = 0;
+        int trackCenterY = 0;
+        int trackH = 0;
+
+        Gdiplus::RectF labelRect{};
+
+        void Compute(const RECT& client, int dpi);
+    };
 
     HINSTANCE m_hInstance;
     HWND m_hWnd = nullptr;
@@ -49,7 +68,6 @@ private:
     ULONGLONG m_showTime = 0;
     int m_displayBrightness = 50;
     bool m_hasPendingBrightness = false;
-
     bool m_isEnabled = true;
     int m_savedBrightness = 50;
 
@@ -60,7 +78,7 @@ private:
     void NotifyOwnerBrightnessChanged(int percent);
     void NotifyOwnerEnabledChanged(bool enabled);
 
-    void GetToggleBounds(int dpi, RECT& rect) const;
-    void GetTrackBounds(int dpi, int& left, int& right, int& centerY) const;
-    int XToPercent(int x, int dpi) const;
+    Layout BuildLayout(int dpi) const;
+
+    int XToPercent(int x, const Layout& layout) const;
 };

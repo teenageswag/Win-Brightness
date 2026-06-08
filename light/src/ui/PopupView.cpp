@@ -17,23 +17,65 @@ namespace {
     constexpr COLORREF kColorToggleOff = RGB(0x55, 0x55, 0x55);
     constexpr COLORREF kColorToggleThumb = RGB(0x12, 0x12, 0x12);
 
-    Gdiplus::Color ToGdiColor(COLORREF color) { return Gdiplus::Color(255, GetRValue(color), GetGValue(color), GetBValue(color)); }
+    Gdiplus::Color ToGdiColor(COLORREF c) {
+        return Gdiplus::Color(255, GetRValue(c), GetGValue(c), GetBValue(c));
+    }
 
     LRESULT CALLBACK PopupWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-        PopupView* popupView = nullptr;
+        PopupView* view = nullptr;
         if (msg == WM_NCCREATE) {
-            auto* createStruct = reinterpret_cast<LPCREATESTRUCT>(lParam);
-            popupView = static_cast<PopupView*>(createStruct->lpCreateParams);
-            SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(popupView));
-        } else {
-            popupView = reinterpret_cast<PopupView*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
+            auto* cs = reinterpret_cast<LPCREATESTRUCT>(lParam);
+            view = static_cast<PopupView*>(cs->lpCreateParams);
+            SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(view));
         }
-
-        return popupView ? popupView->HandleMessage(hWnd, msg, wParam, lParam) : DefWindowProc(hWnd, msg, wParam, lParam);
+        else {
+            view = reinterpret_cast<PopupView*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
+        }
+        return view ? view->HandleMessage(hWnd, msg, wParam, lParam) : DefWindowProc(hWnd, msg, wParam, lParam);
     }
 } // namespace
 
-PopupView::PopupView(HINSTANCE hInstance, BrightnessController& controller) : m_hInstance(hInstance), m_controller(controller) {
+// =============================================================================
+// Layout::Compute
+// =============================================================================
+void PopupView::Layout::Compute(const RECT& client, int dpi) {
+    const int W = client.right - client.left;
+    const int H = client.bottom - client.top;
+
+    centerY = H / 2;
+
+    const int padH = ScaleByDpi(kBasePaddingH, dpi);
+    const int toggleW = ScaleByDpi(kBaseToggleW, dpi);
+    const int toggleH = ScaleByDpi(kBaseToggleH, dpi);
+    const int toggleGap = ScaleByDpi(kBaseToggleTrackGap, dpi);
+    const int trackLabelGap = ScaleByDpi(kBaseTrackLabelGap, dpi);
+    const int labelW = ScaleByDpi(kBaseLabelW, dpi);
+    const int labelH = H; // full height — we'll center text inside
+
+    trackH = ScaleByDpi(kBaseTrackH, dpi);
+
+    // Toggle: left edge at padH, vertically centered
+    toggle.left = padH;
+    toggle.right = padH + toggleW;
+    toggle.top = centerY - toggleH / 2;
+    toggle.bottom = centerY + toggleH / 2;
+
+    // Track: starts right after toggle+gap, ends at (right edge - padH - labelW - labelGap)
+    trackLeft = toggle.right + toggleGap;
+    trackRight = W - padH - labelW - trackLabelGap;
+    trackCenterY = centerY;
+
+    // Label rect: right-aligned, vertically centered
+    const float lx = static_cast<float>(W - padH - labelW);
+    const float ly = 0.0f;
+    labelRect = Gdiplus::RectF(lx, ly, static_cast<float>(labelW), static_cast<float>(labelH));
+}
+
+// =============================================================================
+// PopupView
+// =============================================================================
+PopupView::PopupView(HINSTANCE hInstance, BrightnessController& controller)
+    : m_hInstance(hInstance), m_controller(controller) {
     m_displayBrightness = m_controller.GetBrightness();
 }
 
@@ -45,7 +87,7 @@ PopupView::~PopupView() {
 }
 
 bool PopupView::Register() {
-    WNDCLASSEX wcex = {sizeof(wcex)};
+    WNDCLASSEX wcex = { sizeof(wcex) };
     wcex.style = CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW;
     wcex.lpfnWndProc = PopupWndProc;
     wcex.hInstance = m_hInstance;
@@ -66,9 +108,7 @@ bool PopupView::Create() {
 }
 
 void PopupView::Toggle(POINT cursorPt) {
-    if (!m_hWnd) {
-        return;
-    }
+    if (!m_hWnd) return;
 
     if (IsWindowVisible(m_hWnd)) {
         Hide();
@@ -82,17 +122,17 @@ void PopupView::Toggle(POINT cursorPt) {
     const int height = ScaleByDpi(kBaseHeight, dpi);
 
     HMONITOR hMonitor = MonitorFromPoint(cursorPt, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO monitorInfo = {sizeof(monitorInfo)};
-    GetMonitorInfo(hMonitor, &monitorInfo);
-    const RECT& workArea = monitorInfo.rcWork;
+    MONITORINFO mi = { sizeof(mi) };
+    GetMonitorInfo(hMonitor, &mi);
+    const RECT& work = mi.rcWork;
 
+    const int margin = ScaleByDpi(8, dpi);
     int x = cursorPt.x - width / 2;
-    int y = workArea.bottom - height - ScaleByDpi(kPadding, dpi);
-    x = std::clamp(x, static_cast<int>(workArea.left) + ScaleByDpi(8, dpi), static_cast<int>(workArea.right) - width - ScaleByDpi(8, dpi));
-    y = std::clamp(y, static_cast<int>(workArea.top) + ScaleByDpi(8, dpi), static_cast<int>(workArea.bottom) - height - ScaleByDpi(8, dpi));
+    int y = work.bottom - height - ScaleByDpi(kBasePaddingH, dpi);
+    x = std::clamp(x, static_cast<int>(work.left) + margin, static_cast<int>(work.right) - width - margin);
+    y = std::clamp(y, static_cast<int>(work.top) + margin, static_cast<int>(work.bottom) - height - margin);
 
     SetWindowRgn(m_hWnd, nullptr, FALSE);
-
     m_showTime = GetTickCount64();
     SetWindowPos(m_hWnd, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE);
     SetForegroundWindow(m_hWnd);
@@ -101,13 +141,8 @@ void PopupView::Toggle(POINT cursorPt) {
 }
 
 void PopupView::Hide() {
-    if (!m_hWnd) {
-        return;
-    }
-
-    if (m_hasPendingBrightness) {
-        CommitPendingBrightness();
-    }
+    if (!m_hWnd) return;
+    if (m_hasPendingBrightness) CommitPendingBrightness();
     KillTimer(m_hWnd, kAutoHideTimerId);
     KillTimer(m_hWnd, kDebounceTimerId);
     ShowWindow(m_hWnd, SW_HIDE);
@@ -116,19 +151,17 @@ void PopupView::Hide() {
 bool PopupView::IsVisible() const { return m_hWnd && IsWindowVisible(m_hWnd); }
 
 void PopupView::SetEnabled(bool enabled) {
-    if (m_isEnabled == enabled) {
-        return;
-    }
+    if (m_isEnabled == enabled) return;
 
     m_isEnabled = enabled;
-
     if (!enabled) {
         m_savedBrightness = m_displayBrightness;
         SetDisplayedBrightness(kMaxBrightness);
         CommitPendingBrightness();
         m_controller.SetBrightness(kMaxBrightness);
         NotifyOwnerBrightnessChanged(kMaxBrightness);
-    } else {
+    }
+    else {
         SetDisplayedBrightness(m_savedBrightness);
         CommitPendingBrightness();
         m_controller.SetBrightness(m_savedBrightness);
@@ -136,23 +169,17 @@ void PopupView::SetEnabled(bool enabled) {
     }
 
     NotifyOwnerEnabledChanged(enabled);
-
-    if (m_hWnd) {
-        InvalidateRect(m_hWnd, nullptr, FALSE);
-    }
+    if (m_hWnd) InvalidateRect(m_hWnd, nullptr, FALSE);
 }
 
 void PopupView::UpdateFromController() {
     m_displayBrightness = m_controller.GetBrightness();
-    if (m_hWnd) {
-        InvalidateRect(m_hWnd, nullptr, FALSE);
-    }
+    if (m_hWnd) InvalidateRect(m_hWnd, nullptr, FALSE);
 }
 
 void PopupView::ResetAutoHideTimer() {
-    if (m_hWnd && IsWindowVisible(m_hWnd)) {
+    if (m_hWnd && IsWindowVisible(m_hWnd))
         SetTimer(m_hWnd, kAutoHideTimerId, kAutoHideDelayMs, nullptr);
-    }
 }
 
 void PopupView::ResetDebounceTimer() {
@@ -164,10 +191,7 @@ void PopupView::ResetDebounceTimer() {
 }
 
 void PopupView::CommitPendingBrightness() {
-    if (!m_hasPendingBrightness) {
-        return;
-    }
-
+    if (!m_hasPendingBrightness) return;
     m_hasPendingBrightness = false;
     KillTimer(m_hWnd, kDebounceTimerId);
     m_controller.SetBrightness(m_displayBrightness);
@@ -176,191 +200,163 @@ void PopupView::CommitPendingBrightness() {
 
 void PopupView::SetDisplayedBrightness(int percent) {
     const int clamped = ClampBrightness(percent);
-    if (clamped == m_displayBrightness) {
-        return;
-    }
-
+    if (clamped == m_displayBrightness) return;
     m_displayBrightness = clamped;
     InvalidateRect(m_hWnd, nullptr, FALSE);
 }
 
 void PopupView::NotifyOwnerBrightnessChanged(int percent) {
-    if (HWND owner = GetWindow(m_hWnd, GW_OWNER)) {
+    if (HWND owner = GetWindow(m_hWnd, GW_OWNER))
         PostMessage(owner, WM_USER_BRIGHTNESS_CHANGED, static_cast<WPARAM>(percent), 0);
-    }
 }
 
 void PopupView::NotifyOwnerEnabledChanged(bool enabled) {
-    if (HWND owner = GetWindow(m_hWnd, GW_OWNER)) {
+    if (HWND owner = GetWindow(m_hWnd, GW_OWNER))
         PostMessage(owner, WM_USER_ENABLED_CHANGED, static_cast<WPARAM>(enabled ? 1 : 0), 0);
-    }
 }
 
-void PopupView::GetToggleBounds(int dpi, RECT& rect) const {
-    RECT clientRect;
-    GetClientRect(m_hWnd, &clientRect);
-
-    const int toggleW = ScaleByDpi(kToggleWidth, dpi);
-    const int toggleH = ScaleByDpi(kToggleHeight, dpi);
-    const int centerY = (clientRect.bottom - clientRect.top) / 2;
-    const int left = ScaleByDpi(kToggleLeftMargin, dpi);
-
-    rect.left = left;
-    rect.top = centerY - toggleH / 2;
-    rect.right = left + toggleW;
-    rect.bottom = centerY + toggleH / 2;
+PopupView::Layout PopupView::BuildLayout(int dpi) const {
+    RECT client;
+    GetClientRect(m_hWnd, &client);
+    Layout layout;
+    layout.Compute(client, dpi);
+    return layout;
 }
 
-void PopupView::GetTrackBounds(int dpi, int& left, int& right, int& centerY) const {
-    RECT clientRect;
-    GetClientRect(m_hWnd, &clientRect);
-
-    // Track starts after toggle + gap
-    left = ScaleByDpi(kToggleLeftMargin + kToggleWidth + kToggleTrackGap, dpi);
-    right = clientRect.right - ScaleByDpi(kPadding + kPercentWidth + kTrackPercentGap, dpi);
-    centerY = (clientRect.bottom - clientRect.top) / 2;
-}
-
-int PopupView::XToPercent(int x, int dpi) const {
-    int left = 0;
-    int right = 0;
-    int centerY = 0;
-    GetTrackBounds(dpi, left, right, centerY);
-    const double ratio = static_cast<double>(x - left) / static_cast<double>(right - left);
+int PopupView::XToPercent(int x, const Layout& layout) const {
+    const double ratio = static_cast<double>(x - layout.trackLeft) / static_cast<double>(layout.trackRight - layout.trackLeft);
     return ClampBrightness(static_cast<int>(std::clamp(ratio, 0.0, 1.0) * 99.0 + 1.0));
 }
 
+// =============================================================================
+// WndProc
+// =============================================================================
 LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
-    case WM_PAINT: {
-        PAINTSTRUCT paintStruct;
-        HDC paintDc = BeginPaint(hWnd, &paintStruct);
-        RECT clientRect;
-        GetClientRect(hWnd, &clientRect);
-        const int width = clientRect.right - clientRect.left;
-        const int height = clientRect.bottom - clientRect.top;
 
-        MemoryPaintDc memoryDc(paintDc, width, height);
-        if (memoryDc.Get()) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hWnd, &ps);
+
+        RECT client;
+        GetClientRect(hWnd, &client);
+        const int W = client.right - client.left;
+        const int H = client.bottom - client.top;
+
+        MemoryPaintDc memDc(hdc, W, H);
+        if (memDc.Get()) {
             using namespace Gdiplus;
 
-            Graphics graphics(memoryDc.Get());
-            graphics.SetSmoothingMode(SmoothingModeAntiAlias);
-            graphics.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
+            Graphics g(memDc.Get());
+            g.SetSmoothingMode(SmoothingModeAntiAlias);
+            g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
 
             // Background
-            SolidBrush backgroundBrush(ToGdiColor(kColorBackground));
-            graphics.FillRectangle(&backgroundBrush, 0, 0, width, height);
+            SolidBrush bgBrush(ToGdiColor(kColorBackground));
+            g.FillRectangle(&bgBrush, 0, 0, W, H);
 
             // Border
-            graphics.SetSmoothingMode(SmoothingModeNone);
+            g.SetSmoothingMode(SmoothingModeNone);
             Pen borderPen(ToGdiColor(kColorMidBorder), 1.0f);
-            graphics.DrawRectangle(&borderPen, 0, 0, width - 1, height - 1);
+            g.DrawRectangle(&borderPen, 0, 0, W - 1, H - 1);
 
             const int dpi = GetDpiForHwnd(hWnd);
+            const Layout lay = BuildLayout(dpi);
 
-            // --- Toggle switch ---
-            graphics.SetSmoothingMode(SmoothingModeAntiAlias);
-            RECT toggleRect;
-            GetToggleBounds(dpi, toggleRect);
+            // -----------------------------------------------------------------
+            // Toggle switch
+            // -----------------------------------------------------------------
+            g.SetSmoothingMode(SmoothingModeNone);
 
-            const int toggleW = toggleRect.right - toggleRect.left;
-            const int toggleH = toggleRect.bottom - toggleRect.top;
-            const int toggleRadius = toggleH / 2;
-
-            const COLORREF toggleBgColor = m_isEnabled ? kColorToggleOn : kColorToggleOff;
-            SolidBrush toggleBgBrush(ToGdiColor(toggleBgColor));
-
-            // Draw toggle track
-            graphics.SetSmoothingMode(SmoothingModeNone);
-            graphics.FillRectangle(&toggleBgBrush, toggleRect.left, toggleRect.top, toggleW, toggleH);
-
-            // thumb
-            const int thumbSize = ScaleByDpi(kToggleThumbSize, dpi);
+            const int toggleW = lay.toggle.right - lay.toggle.left;
+            const int toggleH = lay.toggle.bottom - lay.toggle.top;
+            const int thumbSize = ScaleByDpi(kBaseToggleThumb, dpi);
             const int thumbPad = (toggleH - thumbSize) / 2;
-            const int thumbX = m_isEnabled ? (toggleRect.right - thumbSize - thumbPad) : (toggleRect.left + thumbPad);
-            const int thumbY = toggleRect.top + thumbPad;
+
+            SolidBrush toggleBg(ToGdiColor(m_isEnabled ? kColorToggleOn : kColorToggleOff));
+            g.FillRectangle(&toggleBg, lay.toggle.left, lay.toggle.top, toggleW, toggleH);
+
+            const int thumbX = m_isEnabled
+                ? (lay.toggle.right - thumbSize - thumbPad)
+                : (lay.toggle.left + thumbPad);
+            const int thumbY = lay.toggle.top + thumbPad;
 
             SolidBrush thumbBrush(ToGdiColor(kColorToggleThumb));
-            graphics.FillRectangle(&thumbBrush, thumbX, thumbY, thumbSize, thumbSize);
-            graphics.SetSmoothingMode(SmoothingModeAntiAlias);
+            g.FillRectangle(&thumbBrush, thumbX, thumbY, thumbSize, thumbSize);
 
-            // --- Slider track ---
-            graphics.SetSmoothingMode(SmoothingModeNone);
-            int trackLeft = 0;
-            int trackRight = 0;
-            int trackCenterY = 0;
-            GetTrackBounds(dpi, trackLeft, trackRight, trackCenterY);
-            const int trackHeight = ScaleByDpi(kTrackHeight, dpi);
+            // -----------------------------------------------------------------
+            // Slider track
+            // -----------------------------------------------------------------
+            const COLORREF activeColor = m_isEnabled ? kColorText : kColorDisabled;
+            const float trackHf = static_cast<float>(lay.trackH);
+            const float cy = static_cast<float>(lay.trackCenterY);
 
-            const COLORREF trackActiveColor = m_isEnabled ? kColorText : kColorDisabled;
-            const COLORREF trackInactiveColor = kColorMidBorder;
+            const int visualBrightness = m_isEnabled ? m_displayBrightness : m_savedBrightness;
+            const double ratio = visualBrightness / 100.0;
+            const int thumbX_tr = lay.trackLeft + static_cast<int>((lay.trackRight - lay.trackLeft) * ratio);
 
-            const double ratio = m_displayBrightness / 100.0;
-            const int thumbTrackX = trackLeft + static_cast<int>((trackRight - trackLeft) * ratio);
+            Pen inactivePen(ToGdiColor(kColorMidBorder), trackHf);
+            g.DrawLine(&inactivePen, static_cast<REAL>(lay.trackLeft), cy, static_cast<REAL>(lay.trackRight), cy);
 
-            Pen inactiveTrack(ToGdiColor(trackInactiveColor), static_cast<REAL>(trackHeight));
-            graphics.DrawLine(&inactiveTrack, static_cast<REAL>(trackLeft), static_cast<REAL>(trackCenterY), static_cast<REAL>(trackRight),
-                              static_cast<REAL>(trackCenterY));
+            Pen activePen(ToGdiColor(activeColor), trackHf);
+            g.DrawLine(&activePen, static_cast<REAL>(lay.trackLeft), cy, static_cast<REAL>(thumbX_tr), cy);
 
-            Pen activeTrack(ToGdiColor(trackActiveColor), static_cast<REAL>(trackHeight));
-            graphics.DrawLine(&activeTrack, static_cast<REAL>(trackLeft), static_cast<REAL>(trackCenterY), static_cast<REAL>(thumbTrackX),
-                              static_cast<REAL>(trackCenterY));
+            // -----------------------------------------------------------------
+            // Percent label
+            // -----------------------------------------------------------------
+            wchar_t buf[8];
+            swprintf_s(buf, L"%d%%", visualBrightness);
 
-            // --- Percent text ---
-            wchar_t percentText[8];
-            swprintf_s(percentText, L"%d%%", m_displayBrightness);
-            FontFamily percentFamily(L"Geist Mono");
-            Font percentFont(&percentFamily, 9.0f, FontStyleRegular, UnitPoint);
+            FontFamily family(L"Geist Mono");
+            Font font(&family, 9.0f, FontStyleRegular, UnitPoint);
 
-            const COLORREF textColor = m_isEnabled ? kColorText : kColorDisabled;
-            SolidBrush textBrush(ToGdiColor(textColor));
-            StringFormat percentFormat;
-            percentFormat.SetAlignment(StringAlignmentNear);
-            percentFormat.SetLineAlignment(StringAlignmentCenter);
+            SolidBrush textBrush(ToGdiColor(m_isEnabled ? kColorText : kColorDisabled));
 
-            // fixme: костыльно выравниваем текст, чтобы он был ровно между краем окна и слайдером. лучше бы делать это динамически
-            int customGap = ScaleByDpi(19, dpi);
+            StringFormat fmt;
+            fmt.SetAlignment(StringAlignmentCenter);
+            fmt.SetLineAlignment(StringAlignmentCenter);
 
-            RectF percentRect(static_cast<REAL>(trackRight + customGap), static_cast<REAL>(trackCenterY - ScaleByDpi(15, dpi)),
-                              static_cast<REAL>(ScaleByDpi(kPercentWidth, dpi)), static_cast<REAL>(ScaleByDpi(30, dpi)));
-            graphics.DrawString(percentText, -1, &percentFont, percentRect, &percentFormat, &textBrush);
+            g.DrawString(buf, -1, &font, lay.labelRect, &fmt, &textBrush);
 
-            BitBlt(paintDc, 0, 0, width, height, memoryDc.Get(), 0, 0, SRCCOPY);
+            BitBlt(hdc, 0, 0, W, H, memDc.Get(), 0, 0, SRCCOPY);
         }
 
-        EndPaint(hWnd, &paintStruct);
+        EndPaint(hWnd, &ps);
         return 0;
     }
 
     case WM_LBUTTONDOWN: {
-        const int dpi = GetDpiForHwnd(hWnd);
-        POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        const int   dpi = GetDpiForHwnd(hWnd);
+        const Layout lay = BuildLayout(dpi);
+        POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 
-        // Check if click is on toggle
-        RECT toggleRect;
-        GetToggleBounds(dpi, toggleRect);
-        // Expand hit area a bit for easier clicking
+        // Toggle hit area (expand by 4 logical px for easier clicking)
         const int hitPad = ScaleByDpi(4, dpi);
-        RECT toggleHit = {toggleRect.left - hitPad, toggleRect.top - hitPad, toggleRect.right + hitPad, toggleRect.bottom + hitPad};
-        if (PtInRect(&toggleHit, point)) {
+        RECT toggleHit = {
+            lay.toggle.left - hitPad, lay.toggle.top - hitPad,
+            lay.toggle.right + hitPad, lay.toggle.bottom + hitPad
+        };
+        if (PtInRect(&toggleHit, pt)) {
             SetEnabled(!m_isEnabled);
             ResetAutoHideTimer();
             return 0;
         }
 
-        // Check if click is on slider track (only if enabled)
         if (m_isEnabled) {
-            int trackLeft = 0;
-            int trackRight = 0;
-            int trackCenterY = 0;
-            GetTrackBounds(dpi, trackLeft, trackRight, trackCenterY);
-            const int pad = ScaleByDpi(kThumbRadius + 4, dpi);
-            if (point.x >= trackLeft - pad && point.x <= trackRight + pad && point.y >= trackCenterY - ScaleByDpi(16, dpi) &&
-                point.y <= trackCenterY + ScaleByDpi(16, dpi)) {
+            // Vertical hit area is half the window height above/below track center
+            const int vPad = lay.trackCenterY / 2;
+            const int hPad = ScaleByDpi(kBaseThumbRadius + 4, dpi);
+
+            const bool inTrack =
+                pt.x >= lay.trackLeft - hPad &&
+                pt.x <= lay.trackRight + hPad &&
+                pt.y >= lay.trackCenterY - vPad &&
+                pt.y <= lay.trackCenterY + vPad;
+
+            if (inTrack) {
                 m_isDragging = true;
                 SetCapture(hWnd);
-                SetDisplayedBrightness(XToPercent(point.x, dpi));
+                SetDisplayedBrightness(XToPercent(pt.x, lay));
                 ResetDebounceTimer();
                 ResetAutoHideTimer();
             }
@@ -369,12 +365,10 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
     }
 
     case WM_MOUSEMOVE: {
-        if (!m_isDragging) {
-            return 0;
-        }
-
-        const int dpi = GetDpiForHwnd(hWnd);
-        SetDisplayedBrightness(XToPercent(GET_X_LPARAM(lParam), dpi));
+        if (!m_isDragging) return 0;
+        const int   dpi = GetDpiForHwnd(hWnd);
+        const Layout lay = BuildLayout(dpi);
+        SetDisplayedBrightness(XToPercent(GET_X_LPARAM(lParam), lay));
         ResetDebounceTimer();
         ResetAutoHideTimer();
         return 0;
@@ -389,9 +383,7 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
         return 0;
 
     case WM_MOUSEWHEEL: {
-        if (!m_isEnabled) {
-            return 0;
-        }
+        if (!m_isEnabled) return 0;
         const int delta = GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? 1 : -1;
         SetDisplayedBrightness(m_displayBrightness + delta);
         ResetDebounceTimer();
@@ -400,54 +392,39 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
     }
 
     case WM_KEYDOWN:
-        if (wParam == VK_ESCAPE) {
-            Hide();
-            return 0;
-        }
+        if (wParam == VK_ESCAPE) { Hide(); return 0; }
         if (m_isEnabled) {
             if (wParam == VK_LEFT || wParam == VK_DOWN) {
                 SetDisplayedBrightness(m_displayBrightness - 1);
-                ResetDebounceTimer();
-                ResetAutoHideTimer();
+                ResetDebounceTimer(); ResetAutoHideTimer();
                 return 0;
             }
             if (wParam == VK_RIGHT || wParam == VK_UP) {
                 SetDisplayedBrightness(m_displayBrightness + 1);
-                ResetDebounceTimer();
-                ResetAutoHideTimer();
+                ResetDebounceTimer(); ResetAutoHideTimer();
                 return 0;
             }
         }
         break;
 
     case WM_TIMER:
-        if (wParam == kAutoHideTimerId) {
-            Hide();
-            return 0;
-        }
-        if (wParam == kDebounceTimerId) {
-            CommitPendingBrightness();
-            return 0;
-        }
+        if (wParam == kAutoHideTimerId) { Hide(); return 0; }
+        if (wParam == kDebounceTimerId) { CommitPendingBrightness(); return 0; }
         break;
 
     case WM_ACTIVATE:
-        if (LOWORD(wParam) == WA_INACTIVE && GetTickCount64() - m_showTime > 500) {
+        if (LOWORD(wParam) == WA_INACTIVE && GetTickCount64() - m_showTime > 500)
             Hide();
-        }
         return 0;
 
     case WM_KILLFOCUS:
-        if (GetTickCount64() - m_showTime > 500) {
+        if (GetTickCount64() - m_showTime > 500)
             Hide();
-        }
         return 0;
 
     case WM_NCDESTROY:
         SetWindowLongPtr(hWnd, GWLP_USERDATA, 0);
-        if (hWnd == m_hWnd) {
-            m_hWnd = nullptr;
-        }
+        if (hWnd == m_hWnd) m_hWnd = nullptr;
         return 0;
     }
 
