@@ -1,4 +1,4 @@
-﻿# 💡 Light — Windows Brightness Control
+﻿# 💡 Win-Brightness — Windows Brightness Control
 
 > A lightweight application for controlling monitor brightness directly from the system tray.
 
@@ -43,7 +43,7 @@
 
 **Steps:**
 
-1. Open `light.slnx` in Visual Studio
+1. Open `Win-Brightness.slnx` in Visual Studio
 2. Select the `Release | x64` configuration
 3. Build the project (`Ctrl+Shift+B`)
 
@@ -54,8 +54,8 @@ The compiled binary will be located in `build/bin/x64/`.
 ## 📁 Project Structure
 
 ```
-light/
-├── light/src/
+Win-Brightness/
+├── Win-Brightness/src/
 │   ├── main.cpp / main.h          # Entry point, GDI+ initialization
 │   ├── app/
 │   │   ├── App.cpp / App.h        # Main application class, message loop
