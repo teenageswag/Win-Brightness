@@ -3,12 +3,12 @@
 #include <cwchar>
 
 namespace {
-    constexpr const wchar_t* kSettingsKey = L"Software\\LightBrightness\\Settings";
-    constexpr const wchar_t* kLegacySettingsKey = L"Software\\LightBrightness";
+    constexpr const wchar_t* kSettingsKey = L"Software\\Win-Brightness\\Settings";
+    constexpr const wchar_t* kLegacySettingsKey = L"Software\\Win-Brightness";
     constexpr const wchar_t* kModeValue = L"DimmingMode";
     constexpr const wchar_t* kBrightnessValue = L"Brightness";
     constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-    constexpr const wchar_t* kRunValue = L"LightBrightness";
+    constexpr const wchar_t* kRunValue = L"Win-Brightness";
 } // namespace
 
 bool SettingsStore::TryReadDword(const wchar_t* subKey, const wchar_t* valueName, DWORD& value) const {

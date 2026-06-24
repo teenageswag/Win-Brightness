@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="light/light.vcxproj" Id="eb779555-7e69-450f-b01c-7ec5bdbd8867" />
+  <Project Path="Win-Brightness/Win-Brightness.vcxproj" Id="eb779555-7e69-450f-b01c-7ec5bdbd8867" />
 </Solution>
