@@ -70,7 +70,7 @@ bool App::Init() {
     m_msgTaskbarCreated = RegisterWindowMessage(L"TaskbarCreated");
     AddTrayIcon();
 
-    if (m_brightnessMode == BrightnessMode::Software && !m_controller.IsHardwareAvailable()) {
+    if (m_brightnessMode == BrightnessMode::Hardware && m_controller.IsHardwareAvailable()) {
         ShowDdcFallbackBalloonOnce();
     }
 
@@ -265,9 +265,7 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
 
     case WM_DISPLAYCHANGE:
         m_controller.RefreshMonitors();
-        FallbackToSoftwareIfNeeded();
         m_controller.SetBrightnessMode(m_brightnessMode);
-        m_settings.SaveBrightnessMode(m_brightnessMode);
         UpdateTrayIcon(m_controller.GetBrightness());
         return 0;
 
