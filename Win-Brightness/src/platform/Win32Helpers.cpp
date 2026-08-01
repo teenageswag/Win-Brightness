@@ -91,7 +91,12 @@ int GetDpiForPoint(POINT pt) {
 }
 
 int GetDpiForHwnd(HWND hWnd) {
-    auto getDpiForWindow = reinterpret_cast<UINT(WINAPI*)(HWND)>(GetProcAddress(GetModuleHandle(L"user32.dll"), "GetDpiForWindow"));
+    HMODULE user32 = GetModuleHandle(L"user32.dll");
+    if (!user32) {
+        return 96;
+    }
+
+    auto getDpiForWindow = reinterpret_cast<UINT(WINAPI*)(HWND)>(GetProcAddress(user32, "GetDpiForWindow"));
     return (getDpiForWindow && hWnd) ? static_cast<int>(getDpiForWindow(hWnd)) : 96;
 }
 

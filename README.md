@@ -24,6 +24,12 @@
 | **Right Click** on tray icon | Open context menu             |
 | Drag the slider              | Adjust brightness (1–100%)    |
 | Toggle in popup              | Enable / disable dimming      |
+| `Tab`                        | Move between toggle and slider |
+| Arrow keys / mouse wheel     | Adjust brightness by 1%       |
+| `Page Up` / `Page Down`      | Adjust brightness by 10%      |
+| `Home` / `End`               | Set minimum / maximum brightness |
+| `Space` / `Enter`            | Toggle dimming when the switch is focused |
+| `Escape`                     | Close the popup               |
 
 ### Context Menu
 
@@ -47,7 +53,7 @@
 2. Select the `Release | x64` configuration
 3. Build the project (`Ctrl+Shift+B`)
 
-The compiled binary will be located in `build/bin/x64/`.
+The compiled binary will be located in `build/bin/x64/Release/`.
 
 ---
 
@@ -79,7 +85,7 @@ Win-Brightness/
 
 ## ⚙️ Technologies
 
-- **C++17** — core language
+- **C++23** — core language
 - **Win32 API** — windows, tray, messages
 - **GDI+ (Gdiplus)** — UI rendering
 - **DDC/CI** — hardware brightness control

@@ -25,7 +25,8 @@ private:
     void ShowContextMenu(POINT pt);
     void SetBrightnessMode(BrightnessMode mode);
     void SetEnabled(bool enabled);
-    void FallbackToSoftwareIfNeeded();
+    bool FallbackToSoftwareIfNeeded();
+    POINT GetTrayIconPosition() const;
 
     HINSTANCE m_hInstance;
     HWND m_hMsgWnd = nullptr;
@@ -38,4 +39,5 @@ private:
     bool m_isEnabled = true;
     bool m_ddcFallbackBalloonShown = false;
     bool m_trayIconAdded = false;
+    bool m_trayUsesVersion4 = false;
 };

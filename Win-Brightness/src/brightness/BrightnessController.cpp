@@ -36,12 +36,11 @@ void BrightnessController::Cleanup() {
 
 int BrightnessController::GetBrightness() const { return m_currentBrightness.load(std::memory_order_relaxed); }
 
-bool BrightnessController::SetBrightness(int percent) {
+void BrightnessController::SetBrightness(int percent) {
     const int clamped = ClampBrightness(percent);
     m_currentBrightness.store(clamped, std::memory_order_relaxed);
     m_targetBrightness.store(clamped, std::memory_order_release);
     m_workerCv.notify_one();
-    return true;
 }
 
 void BrightnessController::SetBrightnessMode(BrightnessMode mode) {
@@ -65,8 +64,6 @@ bool BrightnessController::IsHardwareAvailable() const {
 }
 
 void BrightnessController::WorkerThreadProc() {
-    int lastApplied = -1;
-
     while (true) {
         int target = -1;
         {
@@ -85,11 +82,10 @@ void BrightnessController::WorkerThreadProc() {
             target = latest;
         }
 
-        if (target == -1 || target == lastApplied) {
+        if (target == -1) {
             continue;
         }
 
-        lastApplied = target;
         ApplyBrightness(target, GetBrightnessMode());
     }
 

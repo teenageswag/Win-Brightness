@@ -16,7 +16,7 @@ public:
     void Cleanup();
 
     int GetBrightness() const;
-    bool SetBrightness(int percent);
+    void SetBrightness(int percent);
 
     void SetBrightnessMode(BrightnessMode mode);
     BrightnessMode GetBrightnessMode() const;

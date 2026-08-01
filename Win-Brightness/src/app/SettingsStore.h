@@ -18,4 +18,5 @@ public:
 
 private:
     bool TryReadDword(const wchar_t* subKey, const wchar_t* valueName, DWORD& value) const;
+    bool WriteDword(const wchar_t* subKey, const wchar_t* valueName, DWORD value) const;
 };

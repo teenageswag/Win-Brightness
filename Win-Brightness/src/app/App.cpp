@@ -47,7 +47,7 @@ bool App::Init() {
 
     m_brightnessMode = m_settings.LoadBrightnessMode();
     m_isEnabled = m_settings.LoadEnabled();
-    FallbackToSoftwareIfNeeded();
+    const bool didFallback = FallbackToSoftwareIfNeeded();
     m_controller.SetBrightnessMode(m_brightnessMode);
     m_controller.SetBrightness(m_settings.LoadBrightness(m_controller.GetBrightness()));
 
@@ -70,7 +70,7 @@ bool App::Init() {
     m_msgTaskbarCreated = RegisterWindowMessage(L"TaskbarCreated");
     AddTrayIcon();
 
-    if (m_brightnessMode == BrightnessMode::Hardware && m_controller.IsHardwareAvailable()) {
+    if (didFallback) {
         ShowDdcFallbackBalloonOnce();
     }
 
@@ -78,12 +78,17 @@ bool App::Init() {
 }
 
 int App::Run() {
-    MSG msg;
-    while (GetMessage(&msg, nullptr, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+    MSG msg{};
+    while (true) {
+        const BOOL result = GetMessage(&msg, nullptr, 0, 0);
+        if (result > 0) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+            continue;
+        }
+
+        return result == 0 ? static_cast<int>(msg.wParam) : 1;
     }
-    return static_cast<int>(msg.wParam);
 }
 
 bool App::CreateMsgWindow() {
@@ -118,13 +123,17 @@ void App::AddTrayIcon() {
     nid.hIcon = m_hAppIcon;
     swprintf_s(nid.szTip, L"Brightness: %d%% [%s]", m_controller.GetBrightness(), ModeLabel(m_brightnessMode));
 
+    bool iconUpdated = false;
     if (Shell_NotifyIcon(NIM_ADD, &nid)) {
         m_trayIconAdded = true;
-        return;
+        iconUpdated = true;
+    } else if (m_trayIconAdded && Shell_NotifyIcon(NIM_MODIFY, &nid)) {
+        iconUpdated = true;
     }
 
-    if (m_trayIconAdded && Shell_NotifyIcon(NIM_MODIFY, &nid)) {
-        return;
+    if (iconUpdated) {
+        nid.uVersion = NOTIFYICON_VERSION_4;
+        m_trayUsesVersion4 = Shell_NotifyIcon(NIM_SETVERSION, &nid) != FALSE;
     }
 }
 
@@ -135,6 +144,7 @@ void App::RemoveTrayIcon() {
         nid.uID = kTrayIconId;
         Shell_NotifyIcon(NIM_DELETE, &nid);
         m_trayIconAdded = false;
+        m_trayUsesVersion4 = false;
     }
 }
 
@@ -202,10 +212,14 @@ void App::ShowContextMenu(POINT pt) {
 
 void App::SetBrightnessMode(BrightnessMode mode) {
     m_brightnessMode = mode;
-    FallbackToSoftwareIfNeeded();
+    const bool didFallback = FallbackToSoftwareIfNeeded();
     m_controller.SetBrightnessMode(m_brightnessMode);
     m_settings.SaveBrightnessMode(m_brightnessMode);
     UpdateTrayIcon(m_controller.GetBrightness());
+
+    if (didFallback) {
+        ShowDdcFallbackBalloonOnce();
+    }
 
     if (m_popup) {
         m_popup->UpdateFromController();
@@ -218,11 +232,28 @@ void App::SetEnabled(bool enabled) {
     UpdateTrayIcon(m_controller.GetBrightness());
 }
 
-void App::FallbackToSoftwareIfNeeded() {
+bool App::FallbackToSoftwareIfNeeded() {
     if (m_brightnessMode == BrightnessMode::Hardware && !m_controller.IsHardwareAvailable()) {
         m_brightnessMode = BrightnessMode::Software;
-        ShowDdcFallbackBalloonOnce();
+        return true;
     }
+
+    return false;
+}
+
+POINT App::GetTrayIconPosition() const {
+    NOTIFYICONIDENTIFIER identifier = {sizeof(identifier)};
+    identifier.hWnd = m_hMsgWnd;
+    identifier.uID = kTrayIconId;
+
+    RECT rect{};
+    if (SUCCEEDED(Shell_NotifyIconGetRect(&identifier, &rect))) {
+        return POINT{(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
+    }
+
+    POINT pt{};
+    GetCursorPos(&pt);
+    return pt;
 }
 
 LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -234,17 +265,30 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
     switch (message) {
     case WM_USER_SHELLICON:
         switch (LOWORD(lParam)) {
+        case NIN_SELECT:
+            if (m_trayUsesVersion4 && m_popup) {
+                m_popup->Toggle(GetTrayIconPosition(), false);
+            }
+            break;
+        case NIN_KEYSELECT:
+            if (m_trayUsesVersion4 && m_popup) {
+                m_popup->Toggle(GetTrayIconPosition(), true);
+            }
+            break;
         case WM_LBUTTONUP:
-            if (m_popup) {
-                POINT pt;
-                GetCursorPos(&pt);
-                m_popup->Toggle(pt);
+            if (!m_trayUsesVersion4 && m_popup) {
+                m_popup->Toggle(GetTrayIconPosition(), false);
+            }
+            break;
+        case WM_CONTEXTMENU:
+            if (m_trayUsesVersion4) {
+                ShowContextMenu(GetTrayIconPosition());
             }
             break;
         case WM_RBUTTONUP: {
-            POINT pt;
-            GetCursorPos(&pt);
-            ShowContextMenu(pt);
+            if (!m_trayUsesVersion4) {
+                ShowContextMenu(GetTrayIconPosition());
+            }
             break;
         }
         }
@@ -265,8 +309,14 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
 
     case WM_DISPLAYCHANGE:
         m_controller.RefreshMonitors();
+        if (FallbackToSoftwareIfNeeded()) {
+            ShowDdcFallbackBalloonOnce();
+        }
         m_controller.SetBrightnessMode(m_brightnessMode);
         UpdateTrayIcon(m_controller.GetBrightness());
+        if (m_popup) {
+            m_popup->UpdateFromController();
+        }
         return 0;
 
     case WM_COMMAND:

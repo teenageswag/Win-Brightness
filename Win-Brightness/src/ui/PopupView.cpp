@@ -6,16 +6,61 @@
 #include <cwchar>
 #include <windowsx.h>
 
-#pragma comment(lib, "dwmapi.lib")
-
 namespace {
     constexpr COLORREF kColorBackground = RGB(0x12, 0x12, 0x12);
     constexpr COLORREF kColorMidBorder = RGB(0x33, 0x33, 0x33);
-    constexpr COLORREF kColorText = RGB(0xD9, 0xD9, 0xD9);
-    constexpr COLORREF kColorDisabled = RGB(0x55, 0x55, 0x55);
-    constexpr COLORREF kColorToggleOn = RGB(0xD9, 0xD9, 0xD9);
-    constexpr COLORREF kColorToggleOff = RGB(0x55, 0x55, 0x55);
+    constexpr COLORREF kColorText = RGB(0xE3, 0xE3, 0xE3);
+    constexpr COLORREF kColorDisabled = RGB(0x76, 0x76, 0x76);
+    constexpr COLORREF kColorTrack = RGB(0x62, 0x62, 0x62);
+    constexpr COLORREF kColorFocus = RGB(0x8A, 0x8A, 0x8A);
+    constexpr COLORREF kColorToggleOn = RGB(0xE3, 0xE3, 0xE3);
+    constexpr COLORREF kColorToggleOff = RGB(0x76, 0x76, 0x76);
     constexpr COLORREF kColorToggleThumb = RGB(0x12, 0x12, 0x12);
+
+    struct Palette {
+        COLORREF background;
+        COLORREF border;
+        COLORREF text;
+        COLORREF disabled;
+        COLORREF track;
+        COLORREF focus;
+        COLORREF toggleOn;
+        COLORREF toggleOff;
+        COLORREF toggleThumbOn;
+        COLORREF toggleThumbOff;
+    };
+
+    Palette GetPalette() {
+        HIGHCONTRAST highContrast = {sizeof(highContrast)};
+        if (SystemParametersInfo(SPI_GETHIGHCONTRAST, sizeof(highContrast), &highContrast, 0) &&
+            (highContrast.dwFlags & HCF_HIGHCONTRASTON) != 0) {
+            return {
+                GetSysColor(COLOR_WINDOW),
+                GetSysColor(COLOR_WINDOWTEXT),
+                GetSysColor(COLOR_WINDOWTEXT),
+                GetSysColor(COLOR_GRAYTEXT),
+                GetSysColor(COLOR_GRAYTEXT),
+                GetSysColor(COLOR_HIGHLIGHT),
+                GetSysColor(COLOR_HIGHLIGHT),
+                GetSysColor(COLOR_BTNFACE),
+                GetSysColor(COLOR_HIGHLIGHTTEXT),
+                GetSysColor(COLOR_BTNTEXT)
+            };
+        }
+
+        return {
+            kColorBackground,
+            kColorMidBorder,
+            kColorText,
+            kColorDisabled,
+            kColorTrack,
+            kColorFocus,
+            kColorToggleOn,
+            kColorToggleOff,
+            kColorToggleThumb,
+            kColorToggleThumb
+        };
+    }
 
     Gdiplus::Color ToGdiColor(COLORREF c) {
         return Gdiplus::Color(255, GetRValue(c), GetGValue(c), GetBValue(c));
@@ -99,7 +144,7 @@ bool PopupView::Register() {
 bool PopupView::Create() {
     m_hWnd = CreateWindowEx(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-        L"BrightnessPopup", L"",
+        L"BrightnessPopup", L"Brightness control",
         WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT,
         kBaseWidth, kBaseHeight,
         nullptr, nullptr, m_hInstance, this
@@ -107,7 +152,7 @@ bool PopupView::Create() {
     return m_hWnd != nullptr;
 }
 
-void PopupView::Toggle(POINT cursorPt) {
+void PopupView::Toggle(POINT cursorPt, bool keyboardInvoked) {
     if (!m_hWnd) return;
 
     if (IsWindowVisible(m_hWnd)) {
@@ -116,6 +161,8 @@ void PopupView::Toggle(POINT cursorPt) {
     }
 
     m_displayBrightness = m_controller.GetBrightness();
+    m_focusTarget = FocusTarget::Slider;
+    m_showKeyboardFocus = keyboardInvoked;
 
     const int dpi = GetDpiForPoint(cursorPt);
     const int width = ScaleByDpi(kBaseWidth, dpi);
@@ -137,6 +184,7 @@ void PopupView::Toggle(POINT cursorPt) {
     SetWindowPos(m_hWnd, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE);
     SetForegroundWindow(m_hWnd);
     SetFocus(m_hWnd);
+    UpdateAccessibleName();
     ResetAutoHideTimer();
 }
 
@@ -156,19 +204,19 @@ void PopupView::SetEnabled(bool enabled) {
     m_isEnabled = enabled;
     if (!enabled) {
         m_savedBrightness = m_displayBrightness;
-        SetDisplayedBrightness(kMaxBrightness);
-        CommitPendingBrightness();
+        m_hasPendingBrightness = false;
+        KillTimer(m_hWnd, kDebounceTimerId);
+        NotifyOwnerBrightnessChanged(m_savedBrightness);
         m_controller.SetBrightness(kMaxBrightness);
-        NotifyOwnerBrightnessChanged(kMaxBrightness);
     }
     else {
         SetDisplayedBrightness(m_savedBrightness);
-        CommitPendingBrightness();
         m_controller.SetBrightness(m_savedBrightness);
         NotifyOwnerBrightnessChanged(m_savedBrightness);
     }
 
     NotifyOwnerEnabledChanged(enabled);
+    UpdateAccessibleName();
     if (m_hWnd) InvalidateRect(m_hWnd, nullptr, FALSE);
 }
 
@@ -178,8 +226,10 @@ void PopupView::UpdateFromController() {
 }
 
 void PopupView::ResetAutoHideTimer() {
-    if (m_hWnd && IsWindowVisible(m_hWnd))
+    if (m_hWnd && IsWindowVisible(m_hWnd)) {
+        KillTimer(m_hWnd, kAutoHideTimerId);
         SetTimer(m_hWnd, kAutoHideTimerId, kAutoHideDelayMs, nullptr);
+    }
 }
 
 void PopupView::ResetDebounceTimer() {
@@ -202,7 +252,53 @@ void PopupView::SetDisplayedBrightness(int percent) {
     const int clamped = ClampBrightness(percent);
     if (clamped == m_displayBrightness) return;
     m_displayBrightness = clamped;
+    UpdateAccessibleName();
     InvalidateRect(m_hWnd, nullptr, FALSE);
+}
+
+void PopupView::SetFocusTarget(FocusTarget target) {
+    if (m_focusTarget == target) {
+        return;
+    }
+
+    m_focusTarget = target;
+    UpdateAccessibleName();
+    if (m_hWnd) {
+        InvalidateRect(m_hWnd, nullptr, FALSE);
+    }
+}
+
+void PopupView::SetKeyboardFocusVisible(bool visible) {
+    if (m_showKeyboardFocus == visible) {
+        return;
+    }
+
+    m_showKeyboardFocus = visible;
+    if (m_hWnd) {
+        InvalidateRect(m_hWnd, nullptr, FALSE);
+    }
+}
+
+void PopupView::UpdateAccessibleName() {
+    if (!m_hWnd) {
+        return;
+    }
+
+    wchar_t name[96] = {};
+    if (m_focusTarget == FocusTarget::Toggle) {
+        swprintf_s(
+            name,
+            m_isEnabled ? L"Dimming on. Press Space to turn off." : L"Dimming off. Press Space to turn on.");
+    } else if (m_isEnabled) {
+        swprintf_s(name, L"Brightness %d percent. Use arrow keys to adjust.", m_displayBrightness);
+    } else {
+        swprintf_s(name, L"Brightness %d percent. Dimming is off.", m_savedBrightness);
+    }
+
+    SetWindowText(m_hWnd, name);
+    if (IsWindowVisible(m_hWnd)) {
+        NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, m_hWnd, OBJID_WINDOW, CHILDID_SELF);
+    }
 }
 
 void PopupView::NotifyOwnerBrightnessChanged(int percent) {
@@ -252,12 +348,13 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
             g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
 
             // Background
-            SolidBrush bgBrush(ToGdiColor(kColorBackground));
+            const Palette palette = GetPalette();
+            SolidBrush bgBrush(ToGdiColor(palette.background));
             g.FillRectangle(&bgBrush, 0, 0, W, H);
 
             // Border
             g.SetSmoothingMode(SmoothingModeNone);
-            Pen borderPen(ToGdiColor(kColorMidBorder), 1.0f);
+            Pen borderPen(ToGdiColor(palette.border), 1.0f);
             g.DrawRectangle(&borderPen, 0, 0, W - 1, H - 1);
 
             const int dpi = GetDpiForHwnd(hWnd);
@@ -273,7 +370,7 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
             const int thumbSize = ScaleByDpi(kBaseToggleThumb, dpi);
             const int thumbPad = (toggleH - thumbSize) / 2;
 
-            SolidBrush toggleBg(ToGdiColor(m_isEnabled ? kColorToggleOn : kColorToggleOff));
+            SolidBrush toggleBg(ToGdiColor(m_isEnabled ? palette.toggleOn : palette.toggleOff));
             g.FillRectangle(&toggleBg, lay.toggle.left, lay.toggle.top, toggleW, toggleH);
 
             const int thumbX = m_isEnabled
@@ -281,21 +378,21 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
                 : (lay.toggle.left + thumbPad);
             const int thumbY = lay.toggle.top + thumbPad;
 
-            SolidBrush thumbBrush(ToGdiColor(kColorToggleThumb));
+            SolidBrush thumbBrush(ToGdiColor(m_isEnabled ? palette.toggleThumbOn : palette.toggleThumbOff));
             g.FillRectangle(&thumbBrush, thumbX, thumbY, thumbSize, thumbSize);
 
             // -----------------------------------------------------------------
             // Slider track
             // -----------------------------------------------------------------
-            const COLORREF activeColor = m_isEnabled ? kColorText : kColorDisabled;
+            const COLORREF activeColor = m_isEnabled ? palette.text : palette.disabled;
             const float trackHf = static_cast<float>(lay.trackH);
             const float cy = static_cast<float>(lay.trackCenterY);
 
             const int visualBrightness = m_isEnabled ? m_displayBrightness : m_savedBrightness;
-            const double ratio = visualBrightness / 100.0;
+            const double ratio = (visualBrightness - kMinBrightness) / 99.0;
             const int thumbX_tr = lay.trackLeft + static_cast<int>((lay.trackRight - lay.trackLeft) * ratio);
 
-            Pen inactivePen(ToGdiColor(kColorMidBorder), trackHf);
+            Pen inactivePen(ToGdiColor(palette.track), trackHf);
             g.DrawLine(&inactivePen, static_cast<REAL>(lay.trackLeft), cy, static_cast<REAL>(lay.trackRight), cy);
 
             Pen activePen(ToGdiColor(activeColor), trackHf);
@@ -307,16 +404,45 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
             wchar_t buf[8];
             swprintf_s(buf, L"%d%%", visualBrightness);
 
-            FontFamily family(L"Geist Mono");
+            FontFamily family(L"Segoe UI");
             Font font(&family, 9.0f, FontStyleRegular, UnitPoint);
 
-            SolidBrush textBrush(ToGdiColor(m_isEnabled ? kColorText : kColorDisabled));
+            SolidBrush textBrush(ToGdiColor(m_isEnabled ? palette.text : palette.disabled));
 
             StringFormat fmt;
             fmt.SetAlignment(StringAlignmentCenter);
             fmt.SetLineAlignment(StringAlignmentCenter);
 
             g.DrawString(buf, -1, &font, lay.labelRect, &fmt, &textBrush);
+
+            if (m_showKeyboardFocus && GetFocus() == hWnd) {
+                RECT focusRect{};
+                if (m_focusTarget == FocusTarget::Toggle) {
+                    const int focusPad = ScaleByDpi(3, dpi);
+                    focusRect = {
+                        lay.toggle.left - focusPad,
+                        lay.toggle.top - focusPad,
+                        lay.toggle.right + focusPad,
+                        lay.toggle.bottom + focusPad
+                    };
+                } else {
+                    const int focusPad = ScaleByDpi(4, dpi);
+                    focusRect = {
+                        lay.trackLeft - focusPad,
+                        lay.trackCenterY - ScaleByDpi(8, dpi),
+                        static_cast<LONG>(lay.labelRect.X + lay.labelRect.Width),
+                        lay.trackCenterY + ScaleByDpi(8, dpi)
+                    };
+                }
+                const int focusWidth = (std::max)(2, ScaleByDpi(2, dpi));
+                Pen focusPen(ToGdiColor(palette.focus), static_cast<REAL>(focusWidth));
+                g.DrawRectangle(
+                    &focusPen,
+                    static_cast<INT>(focusRect.left),
+                    static_cast<INT>(focusRect.top),
+                    static_cast<INT>(focusRect.right - focusRect.left - 1),
+                    static_cast<INT>(focusRect.bottom - focusRect.top - 1));
+            }
 
             BitBlt(hdc, 0, 0, W, H, memDc.Get(), 0, 0, SRCCOPY);
         }
@@ -326,17 +452,18 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
     }
 
     case WM_LBUTTONDOWN: {
+        SetKeyboardFocusVisible(false);
         const int   dpi = GetDpiForHwnd(hWnd);
         const Layout lay = BuildLayout(dpi);
         POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 
-        // Toggle hit area (expand by 4 logical px for easier clicking)
-        const int hitPad = ScaleByDpi(4, dpi);
+        const int toggleHitRight = (lay.toggle.right + lay.trackLeft) / 2;
         RECT toggleHit = {
-            lay.toggle.left - hitPad, lay.toggle.top - hitPad,
-            lay.toggle.right + hitPad, lay.toggle.bottom + hitPad
+            0, 0, toggleHitRight, lay.centerY * 2
         };
         if (PtInRect(&toggleHit, pt)) {
+            SetFocus(hWnd);
+            SetFocusTarget(FocusTarget::Toggle);
             SetEnabled(!m_isEnabled);
             ResetAutoHideTimer();
             return 0;
@@ -354,6 +481,8 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
                 pt.y <= lay.trackCenterY + vPad;
 
             if (inTrack) {
+                SetFocus(hWnd);
+                SetFocusTarget(FocusTarget::Slider);
                 m_isDragging = true;
                 SetCapture(hWnd);
                 SetDisplayedBrightness(XToPercent(pt.x, lay));
@@ -383,6 +512,7 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
         return 0;
 
     case WM_MOUSEWHEEL: {
+        SetKeyboardFocusVisible(false);
         if (!m_isEnabled) return 0;
         const int delta = GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? 1 : -1;
         SetDisplayedBrightness(m_displayBrightness + delta);
@@ -393,22 +523,58 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
 
     case WM_KEYDOWN:
         if (wParam == VK_ESCAPE) { Hide(); return 0; }
-        if (m_isEnabled) {
+        if (wParam == VK_TAB) {
+            SetKeyboardFocusVisible(true);
+            SetFocusTarget(m_focusTarget == FocusTarget::Toggle ? FocusTarget::Slider : FocusTarget::Toggle);
+            ResetAutoHideTimer();
+            return 0;
+        }
+        if (m_focusTarget == FocusTarget::Toggle && (wParam == VK_SPACE || wParam == VK_RETURN)) {
+            SetKeyboardFocusVisible(true);
+            SetEnabled(!m_isEnabled);
+            ResetAutoHideTimer();
+            return 0;
+        }
+        if (m_isEnabled && m_focusTarget == FocusTarget::Slider) {
             if (wParam == VK_LEFT || wParam == VK_DOWN) {
+                SetKeyboardFocusVisible(true);
                 SetDisplayedBrightness(m_displayBrightness - 1);
                 ResetDebounceTimer(); ResetAutoHideTimer();
                 return 0;
             }
             if (wParam == VK_RIGHT || wParam == VK_UP) {
+                SetKeyboardFocusVisible(true);
                 SetDisplayedBrightness(m_displayBrightness + 1);
+                ResetDebounceTimer(); ResetAutoHideTimer();
+                return 0;
+            }
+            if (wParam == VK_PRIOR || wParam == VK_NEXT) {
+                SetKeyboardFocusVisible(true);
+                SetDisplayedBrightness(m_displayBrightness + (wParam == VK_PRIOR ? 10 : -10));
+                ResetDebounceTimer(); ResetAutoHideTimer();
+                return 0;
+            }
+            if (wParam == VK_HOME || wParam == VK_END) {
+                SetKeyboardFocusVisible(true);
+                SetDisplayedBrightness(wParam == VK_HOME ? kMinBrightness : kMaxBrightness);
                 ResetDebounceTimer(); ResetAutoHideTimer();
                 return 0;
             }
         }
         break;
 
+    case WM_GETDLGCODE:
+        return DLGC_WANTALLKEYS;
+
     case WM_TIMER:
-        if (wParam == kAutoHideTimerId) { Hide(); return 0; }
+        if (wParam == kAutoHideTimerId) {
+            if (m_isDragging || GetFocus() == hWnd) {
+                ResetAutoHideTimer();
+            } else {
+                Hide();
+            }
+            return 0;
+        }
         if (wParam == kDebounceTimerId) { CommitPendingBrightness(); return 0; }
         break;
 
@@ -418,8 +584,14 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
         return 0;
 
     case WM_KILLFOCUS:
+        InvalidateRect(hWnd, nullptr, FALSE);
         if (GetTickCount64() - m_showTime > 500)
             Hide();
+        return 0;
+
+    case WM_SETFOCUS:
+    case WM_SETTINGCHANGE:
+        InvalidateRect(hWnd, nullptr, FALSE);
         return 0;
 
     case WM_NCDESTROY:

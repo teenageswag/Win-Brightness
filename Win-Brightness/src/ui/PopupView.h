@@ -10,7 +10,7 @@ public:
 
     bool Register();
     bool Create();
-    void Toggle(POINT cursorPt);
+    void Toggle(POINT cursorPt, bool keyboardInvoked = false);
     void Hide();
     bool IsVisible() const;
     HWND GetHWnd() const { return m_hWnd; }
@@ -46,6 +46,11 @@ private:
     static constexpr DWORD kAutoHideDelayMs = 5555;
     static constexpr DWORD kDebounceDelayMs = 80;
 
+    enum class FocusTarget {
+        Toggle,
+        Slider
+    };
+
     struct Layout {
         int centerY = 0;
 
@@ -70,11 +75,16 @@ private:
     bool m_hasPendingBrightness = false;
     bool m_isEnabled = true;
     int m_savedBrightness = 50;
+    FocusTarget m_focusTarget = FocusTarget::Slider;
+    bool m_showKeyboardFocus = false;
 
     void ResetAutoHideTimer();
     void ResetDebounceTimer();
     void CommitPendingBrightness();
     void SetDisplayedBrightness(int percent);
+    void SetFocusTarget(FocusTarget target);
+    void SetKeyboardFocusVisible(bool visible);
+    void UpdateAccessibleName();
     void NotifyOwnerBrightnessChanged(int percent);
     void NotifyOwnerEnabledChanged(bool enabled);
 
