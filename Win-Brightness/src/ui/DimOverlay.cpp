@@ -1,35 +1,35 @@
 #include "DimOverlay.h"
-#include "../brightness/BrightnessTypes.h"
-#include "../platform/Win32Helpers.h"
+#include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace {
-    constexpr const wchar_t* kDimOverlayClassName = L"BrightnessDimOverlay";
-    constexpr double kOverlayCurve = 0.85;
-    constexpr int kMaxOverlayAlpha = 245;
-    
-    LRESULT CALLBACK DimOverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-        switch (msg) {
+    constexpr const wchar_t* kDimOverlayClassName = L"WinBrightnessDimOverlay";
+    constexpr double kOverlayCurve = 0.82;
+    constexpr int kMaxOverlayAlpha = 244;
+
+    LRESULT CALLBACK DimOverlayWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+        switch (message) {
         case WM_ERASEBKGND: {
-            RECT rc;
-            GetClientRect(hWnd, &rc);
-            FillRect(reinterpret_cast<HDC>(wParam), &rc, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+            RECT client{};
+            GetClientRect(hWnd, &client);
+            FillRect(reinterpret_cast<HDC>(wParam), &client, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
             return 1;
         }
         case WM_PAINT: {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hWnd, &ps);
-            RECT rc;
-            GetClientRect(hWnd, &rc);
-            FillRect(hdc, &rc, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
-            EndPaint(hWnd, &ps);
+            PAINTSTRUCT paint{};
+            HDC hdc = BeginPaint(hWnd, &paint);
+            RECT client{};
+            GetClientRect(hWnd, &client);
+            FillRect(hdc, &client, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+            EndPaint(hWnd, &paint);
             return 0;
         }
         case WM_NCHITTEST:
             return HTTRANSPARENT;
         }
-    
-        return DefWindowProc(hWnd, msg, wParam, lParam);
+
+        return DefWindowProc(hWnd, message, wParam, lParam);
     }
 } // namespace
 
@@ -43,12 +43,12 @@ bool DimOverlay::RegisterWindowClass() {
         return true;
     }
 
-    WNDCLASSEX wcex = {sizeof(wcex)};
-    wcex.lpfnWndProc = DimOverlayWndProc;
-    wcex.hInstance = GetModuleHandle(nullptr);
-    wcex.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
-    wcex.lpszClassName = kDimOverlayClassName;
-    registered = RegisterClassEx(&wcex) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+    WNDCLASSEX windowClass{sizeof(windowClass)};
+    windowClass.lpfnWndProc = DimOverlayWndProc;
+    windowClass.hInstance = GetModuleHandle(nullptr);
+    windowClass.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+    windowClass.lpszClassName = kDimOverlayClassName;
+    registered = RegisterClassEx(&windowClass) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
     return registered;
 }
 
@@ -57,80 +57,74 @@ BYTE DimOverlay::AlphaFromPercent(int percent) const {
         return 0;
     }
 
-    const int clamped = ClampBrightness(percent);
-    const double dim = (kMaxBrightness - clamped) / 99.0;
-    const double shaped = std::pow(dim, kOverlayCurve);
-    const int alpha = static_cast<int>(kMaxOverlayAlpha * shaped + 0.5);
-    return static_cast<BYTE>(std::clamp(alpha, 0, kMaxOverlayAlpha));
+    const double dimAmount = (kMaxBrightness - ClampBrightness(percent)) / 99.0;
+    const double shapedAmount = std::pow(dimAmount, kOverlayCurve);
+    return static_cast<BYTE>(std::clamp(static_cast<int>(kMaxOverlayAlpha * shapedAmount + 0.5), 0, kMaxOverlayAlpha));
 }
 
-void DimOverlay::Apply(int percent) {
+void DimOverlay::Apply(int percent, const std::vector<MonitorInfo>& monitors) {
     const BYTE alpha = AlphaFromPercent(percent);
-    if (alpha == 0) {
+    if (alpha == 0 || monitors.empty()) {
         Destroy();
         return;
     }
-
     if (!RegisterWindowClass()) {
         return;
     }
 
-    const std::vector<RECT> monitorRects = GetMonitorRects();
-    if (monitorRects.empty()) {
-        return;
+    std::unordered_set<std::wstring> targetIds;
+    for (const MonitorInfo& monitor : monitors) {
+        targetIds.insert(monitor.id);
     }
 
-    while (m_windows.size() > monitorRects.size()) {
-        HWND hWnd = m_windows.back();
-        m_windows.pop_back();
-        if (IsWindow(hWnd)) {
-            DestroyWindow(hWnd);
+    std::erase_if(m_windows, [&targetIds](const OverlayWindow& window) {
+        if (targetIds.contains(window.monitorId)) {
+            return false;
         }
-    }
+        if (IsWindow(window.handle)) {
+            DestroyWindow(window.handle);
+        }
+        return true;
+    });
 
-    HINSTANCE hInstance = GetModuleHandle(nullptr);
-    for (size_t i = 0; i < monitorRects.size(); ++i) {
-        const RECT& rect = monitorRects[i];
-        HWND hWnd = (i < m_windows.size()) ? m_windows[i] : nullptr;
-
-        if (!IsWindow(hWnd)) {
-            hWnd = CreateWindowEx(
+    const HINSTANCE instance = GetModuleHandle(nullptr);
+    for (const MonitorInfo& monitor : monitors) {
+        auto existing = std::ranges::find(m_windows, monitor.id, &OverlayWindow::monitorId);
+        HWND window = existing != m_windows.end() ? existing->handle : nullptr;
+        if (!IsWindow(window)) {
+            window = CreateWindowEx(
                 WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-                kDimOverlayClassName, L"",
-                WS_POPUP,
-                rect.left, rect.top,
-                rect.right - rect.left, rect.bottom - rect.top,
-                nullptr, nullptr, hInstance, nullptr
-            );
+                kDimOverlayClassName, L"", WS_POPUP,
+                monitor.bounds.left, monitor.bounds.top,
+                monitor.bounds.right - monitor.bounds.left, monitor.bounds.bottom - monitor.bounds.top,
+                nullptr, nullptr, instance, nullptr);
 
-            if (i < m_windows.size()) {
-                m_windows[i] = hWnd;
+            if (existing != m_windows.end()) {
+                existing->handle = window;
             } else {
-                m_windows.push_back(hWnd);
+                m_windows.push_back({monitor.id, window});
             }
         }
 
-        if (!hWnd) {
+        if (!window) {
             continue;
         }
 
-        SetLayeredWindowAttributes(hWnd, 0, alpha, LWA_ALPHA);
-        SetWindowPos(hWnd, HWND_TOPMOST, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        RedrawWindow(hWnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+        SetLayeredWindowAttributes(window, 0, alpha, LWA_ALPHA);
+        SetWindowPos(
+            window, HWND_TOPMOST,
+            monitor.bounds.left, monitor.bounds.top,
+            monitor.bounds.right - monitor.bounds.left, monitor.bounds.bottom - monitor.bounds.top,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
     }
 }
 
 void DimOverlay::Destroy() {
-    for (HWND hWnd : m_windows) {
-        if (IsWindow(hWnd)) {
-            DestroyWindow(hWnd);
+    for (const OverlayWindow& window : m_windows) {
+        if (IsWindow(window.handle)) {
+            DestroyWindow(window.handle);
         }
     }
     m_windows.clear();
-
-    while (HWND hWnd = FindWindow(kDimOverlayClassName, nullptr)) {
-        if (!DestroyWindow(hWnd)) {
-            break;
-        }
-    }
 }

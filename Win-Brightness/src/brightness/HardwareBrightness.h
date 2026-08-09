@@ -4,10 +4,12 @@
 #define NOMINMAX
 #endif
 
-#include <physicalmonitorenumerationapi.h>
-#include <windows.h>
+#include "BrightnessTypes.h"
 #include <mutex>
+#include <physicalmonitorenumerationapi.h>
+#include <string>
 #include <vector>
+#include <windows.h>
 
 class HardwareBrightness {
 public:
@@ -17,10 +19,9 @@ public:
     HardwareBrightness(const HardwareBrightness&) = delete;
     HardwareBrightness& operator=(const HardwareBrightness&) = delete;
 
-    void RefreshMonitors();
-    bool IsAvailable() const;
-    int ReadBrightness();
-    bool ApplyBrightness(int percent);
+    void RefreshMonitors(std::vector<MonitorInfo>& monitors);
+    int ReadBrightness(const std::vector<std::wstring>& monitorIds);
+    bool ApplyBrightness(int percent, const std::vector<std::wstring>& monitorIds);
     void ReleaseMonitors();
 
 private:
@@ -30,8 +31,13 @@ private:
         DWORD maxBrightness = 100;
     };
 
+    struct CachedDisplay {
+        std::wstring id;
+        std::vector<CachedPhysicalMonitor> monitors;
+    };
+
     mutable std::mutex m_mutex;
-    std::vector<CachedPhysicalMonitor> m_monitors;
+    std::vector<CachedDisplay> m_displays;
 
     void ReleaseMonitorsLocked();
 };

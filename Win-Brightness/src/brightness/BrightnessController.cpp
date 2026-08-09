@@ -1,4 +1,7 @@
 #include "BrightnessController.h"
+#include "MonitorCatalog.h"
+#include <algorithm>
+#include <unordered_set>
 
 BrightnessController::BrightnessController() = default;
 
@@ -7,24 +10,31 @@ BrightnessController::~BrightnessController() {
 }
 
 bool BrightnessController::Init() {
-    if (m_initialized.exchange(true, std::memory_order_acq_rel)) {
-        return true;
+    {
+        std::lock_guard lock(m_stateMutex);
+        if (m_initialized) {
+            return true;
+        }
+        m_initialized = true;
+        m_stopWorker = false;
     }
 
     RefreshMonitors();
-    m_currentBrightness.store(ReadBrightnessInternal(), std::memory_order_relaxed);
-
-    m_stopWorker.store(false, std::memory_order_release);
     m_workerThread = std::thread(&BrightnessController::WorkerThreadProc, this);
+    m_workerCv.notify_one();
     return true;
 }
 
 void BrightnessController::Cleanup() {
-    if (!m_initialized.exchange(false, std::memory_order_acq_rel)) {
-        return;
+    {
+        std::lock_guard lock(m_stateMutex);
+        if (!m_initialized) {
+            return;
+        }
+        m_initialized = false;
+        m_stopWorker = true;
     }
 
-    m_stopWorker.store(true, std::memory_order_release);
     m_workerCv.notify_all();
     if (m_workerThread.joinable()) {
         m_workerThread.join();
@@ -34,80 +44,178 @@ void BrightnessController::Cleanup() {
     m_hardware.ReleaseMonitors();
 }
 
-int BrightnessController::GetBrightness() const { return m_currentBrightness.load(std::memory_order_relaxed); }
+int BrightnessController::GetBrightness() const {
+    return m_currentBrightness.load(std::memory_order_relaxed);
+}
 
 void BrightnessController::SetBrightness(int percent) {
-    const int clamped = ClampBrightness(percent);
-    m_currentBrightness.store(clamped, std::memory_order_relaxed);
-    m_targetBrightness.store(clamped, std::memory_order_release);
+    m_currentBrightness.store(ClampBrightness(percent), std::memory_order_relaxed);
+    {
+        std::lock_guard lock(m_stateMutex);
+        QueueApplyLocked();
+    }
     m_workerCv.notify_one();
 }
 
-void BrightnessController::SetBrightnessMode(BrightnessMode mode) {
-    const BrightnessMode nextMode = (mode == BrightnessMode::Software || mode == BrightnessMode::Hardware) ? mode : BrightnessMode::Hardware;
+void BrightnessController::SetEnabled(bool enabled) {
+    {
+        std::lock_guard lock(m_stateMutex);
+        if (m_enabled == enabled) {
+            return;
+        }
+        m_enabled = enabled;
+        QueueApplyLocked();
+    }
+    m_workerCv.notify_one();
+}
 
-    m_brightnessMode.store(static_cast<int>(nextMode), std::memory_order_release);
-    SetBrightness(GetBrightness());
+bool BrightnessController::IsEnabled() const {
+    std::lock_guard lock(m_stateMutex);
+    return m_enabled;
+}
+
+void BrightnessController::SetBrightnessMode(BrightnessMode mode) {
+    {
+        std::lock_guard lock(m_stateMutex);
+        if (m_mode == mode) {
+            return;
+        }
+        m_mode = mode;
+        QueueApplyLocked();
+    }
+    m_workerCv.notify_one();
 }
 
 BrightnessMode BrightnessController::GetBrightnessMode() const {
-    const int value = m_brightnessMode.load(std::memory_order_acquire);
-    return value == static_cast<int>(BrightnessMode::Software) ? BrightnessMode::Software : BrightnessMode::Hardware;
+    std::lock_guard lock(m_stateMutex);
+    return m_mode;
+}
+
+void BrightnessController::SetMonitorSelection(MonitorSelection selection) {
+    std::erase_if(selection.ids, [](const std::wstring& id) { return id.empty(); });
+    std::ranges::sort(selection.ids);
+    selection.ids.erase(std::unique(selection.ids.begin(), selection.ids.end()), selection.ids.end());
+
+    {
+        std::lock_guard lock(m_stateMutex);
+        if (m_selection.all == selection.all && m_selection.ids == selection.ids) {
+            return;
+        }
+        m_selection = std::move(selection);
+        QueueApplyLocked();
+    }
+    m_workerCv.notify_one();
+}
+
+MonitorSelection BrightnessController::GetMonitorSelection() const {
+    std::lock_guard lock(m_stateMutex);
+    return m_selection;
 }
 
 void BrightnessController::RefreshMonitors() {
-    m_hardware.RefreshMonitors();
+    std::vector<MonitorInfo> monitors = MonitorCatalog::Enumerate();
+    m_hardware.RefreshMonitors(monitors);
+
+    {
+        std::lock_guard lock(m_stateMutex);
+        m_monitors = std::move(monitors);
+        QueueApplyLocked();
+    }
+    m_workerCv.notify_one();
 }
 
-bool BrightnessController::IsHardwareAvailable() const {
-    return m_hardware.IsAvailable();
+std::vector<MonitorInfo> BrightnessController::GetMonitors() const {
+    std::lock_guard lock(m_stateMutex);
+    return m_monitors;
+}
+
+bool BrightnessController::IsHardwareAvailableForSelection() const {
+    std::lock_guard lock(m_stateMutex);
+    return std::ranges::any_of(m_monitors, [this](const MonitorInfo& monitor) {
+        return m_selection.Contains(monitor.id) && monitor.hardwareBrightness;
+    });
+}
+
+void BrightnessController::QueueApplyLocked() {
+    m_applyPending = true;
 }
 
 void BrightnessController::WorkerThreadProc() {
     while (true) {
-        int target = -1;
+        ApplyState state;
         {
-            std::unique_lock<std::mutex> lock(m_workerMutex);
-            m_workerCv.wait(lock, [this] { return m_stopWorker.load(std::memory_order_acquire) || m_targetBrightness.load(std::memory_order_acquire) != -1; });
-
-            if (m_stopWorker.load(std::memory_order_acquire)) {
+            std::unique_lock lock(m_stateMutex);
+            m_workerCv.wait(lock, [this] { return m_stopWorker || m_applyPending; });
+            if (m_stopWorker) {
                 break;
             }
 
-            target = m_targetBrightness.exchange(-1, std::memory_order_acq_rel);
+            m_applyPending = false;
+            state.brightness = m_currentBrightness.load(std::memory_order_relaxed);
+            state.enabled = m_enabled;
+            state.mode = m_mode;
+            state.selection = m_selection;
+            state.monitors = m_monitors;
         }
 
-        const int latest = m_targetBrightness.exchange(-1, std::memory_order_acq_rel);
-        if (latest != -1) {
-            target = latest;
-        }
-
-        if (target == -1) {
-            continue;
-        }
-
-        ApplyBrightness(target, GetBrightnessMode());
+        ApplyBrightness(state);
     }
 
     m_software.Reset();
 }
 
-void BrightnessController::ApplyBrightness(int level, BrightnessMode mode) {
-    const int clamped = ClampBrightness(level);
+void BrightnessController::ApplyBrightness(const ApplyState& state) {
+    const std::vector<MonitorInfo> targets = ResolveTargets(state);
+    const std::vector<std::wstring> targetIds = MonitorIds(targets);
 
-    if (mode == BrightnessMode::Hardware && m_hardware.ApplyBrightness(clamped)) {
-        m_software.Reset();
-        return;
+    if (m_hasApplied && m_appliedMode == BrightnessMode::Hardware) {
+        std::vector<std::wstring> removedIds;
+        if (state.mode != BrightnessMode::Hardware) {
+            removedIds = m_appliedMonitorIds;
+        } else {
+            const std::unordered_set<std::wstring> currentIds(targetIds.begin(), targetIds.end());
+            for (const std::wstring& previousId : m_appliedMonitorIds) {
+                if (!currentIds.contains(previousId)) {
+                    removedIds.push_back(previousId);
+                }
+            }
+        }
+        if (!removedIds.empty()) {
+            m_hardware.ApplyBrightness(kMaxBrightness, removedIds);
+        }
     }
 
-    m_software.ApplyBrightness(clamped);
+    if (state.mode == BrightnessMode::Software) {
+        if (state.enabled) {
+            m_software.ApplyBrightness(state.brightness, targets);
+        } else {
+            m_software.Reset();
+        }
+    } else {
+        m_software.Reset();
+        m_hardware.ApplyBrightness(state.enabled ? state.brightness : kMaxBrightness, targetIds);
+    }
+
+    m_hasApplied = true;
+    m_appliedMode = state.mode;
+    m_appliedMonitorIds = targetIds;
 }
 
-int BrightnessController::ReadBrightnessInternal() {
-    const int ddcBrightness = m_hardware.ReadBrightness();
-    if (ddcBrightness >= kMinBrightness && ddcBrightness <= kMaxBrightness) {
-        return ddcBrightness;
+std::vector<MonitorInfo> BrightnessController::ResolveTargets(const ApplyState& state) {
+    std::vector<MonitorInfo> targets;
+    for (const MonitorInfo& monitor : state.monitors) {
+        if (state.selection.Contains(monitor.id)) {
+            targets.push_back(monitor);
+        }
     }
+    return targets;
+}
 
-    return m_software.ReadBrightness();
+std::vector<std::wstring> BrightnessController::MonitorIds(const std::vector<MonitorInfo>& monitors) {
+    std::vector<std::wstring> ids;
+    ids.reserve(monitors.size());
+    for (const MonitorInfo& monitor : monitors) {
+        ids.push_back(monitor.id);
+    }
+    return ids;
 }

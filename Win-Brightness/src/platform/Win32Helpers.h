@@ -4,22 +4,7 @@
 #define NOMINMAX
 #endif
 
-#include <vector>
 #include <windows.h>
-
-class ScreenDc {
-public:
-    ScreenDc();
-    ~ScreenDc();
-
-    ScreenDc(const ScreenDc&) = delete;
-    ScreenDc& operator=(const ScreenDc&) = delete;
-
-    HDC Get() const { return m_hdc; }
-
-private:
-    HDC m_hdc = nullptr;
-};
 
 class RegistryKey {
 public:
@@ -58,7 +43,6 @@ private:
     HGDIOBJ m_oldBitmap = nullptr;
 };
 
-std::vector<RECT> GetMonitorRects();
 int GetDpiForPoint(POINT pt);
 int GetDpiForHwnd(HWND hWnd);
 int ScaleByDpi(int value, int dpi);

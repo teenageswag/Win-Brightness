@@ -122,6 +122,8 @@ void PopupView::Layout::Compute(const RECT& client, int dpi) {
 PopupView::PopupView(HINSTANCE hInstance, BrightnessController& controller)
     : m_hInstance(hInstance), m_controller(controller) {
     m_displayBrightness = m_controller.GetBrightness();
+    m_savedBrightness = m_displayBrightness;
+    m_isEnabled = m_controller.IsEnabled();
 }
 
 PopupView::~PopupView() {
@@ -202,18 +204,10 @@ void PopupView::SetEnabled(bool enabled) {
     if (m_isEnabled == enabled) return;
 
     m_isEnabled = enabled;
-    if (!enabled) {
-        m_savedBrightness = m_displayBrightness;
-        m_hasPendingBrightness = false;
-        KillTimer(m_hWnd, kDebounceTimerId);
-        NotifyOwnerBrightnessChanged(m_savedBrightness);
-        m_controller.SetBrightness(kMaxBrightness);
-    }
-    else {
-        SetDisplayedBrightness(m_savedBrightness);
-        m_controller.SetBrightness(m_savedBrightness);
-        NotifyOwnerBrightnessChanged(m_savedBrightness);
-    }
+    m_savedBrightness = m_displayBrightness;
+    m_hasPendingBrightness = false;
+    KillTimer(m_hWnd, kDebounceTimerId);
+    m_controller.SetEnabled(enabled);
 
     NotifyOwnerEnabledChanged(enabled);
     UpdateAccessibleName();

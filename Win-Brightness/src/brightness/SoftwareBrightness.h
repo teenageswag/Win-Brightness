@@ -1,14 +1,14 @@
 #pragma once
+
+#include "BrightnessTypes.h"
 #include "../ui/DimOverlay.h"
+#include <vector>
 
 class SoftwareBrightness {
 public:
-    int ReadBrightness() const;
-    void ApplyBrightness(int percent);
+    void ApplyBrightness(int percent, const std::vector<MonitorInfo>& monitors);
     void Reset();
 
 private:
-    void ApplyGamma(int percent) const;
-
     DimOverlay m_overlay;
 };

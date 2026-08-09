@@ -1,13 +1,5 @@
 #include "Win32Helpers.h"
 
-ScreenDc::ScreenDc() : m_hdc(GetDC(nullptr)) {}
-
-ScreenDc::~ScreenDc() {
-    if (m_hdc) {
-        ReleaseDC(nullptr, m_hdc);
-    }
-}
-
 RegistryKey::RegistryKey(HKEY key) : m_key(key) {}
 
 RegistryKey::~RegistryKey() {
@@ -55,22 +47,6 @@ MemoryPaintDc::~MemoryPaintDc() {
     if (m_memoryDc) {
         DeleteDC(m_memoryDc);
     }
-}
-
-std::vector<RECT> GetMonitorRects() {
-    std::vector<RECT> rects;
-    EnumDisplayMonitors(
-        nullptr, nullptr,
-        [](HMONITOR hMonitor, HDC, LPRECT, LPARAM data) -> BOOL {
-            auto* monitorRects = reinterpret_cast<std::vector<RECT>*>(data);
-            MONITORINFO monitorInfo = {sizeof(monitorInfo)};
-            if (GetMonitorInfo(hMonitor, &monitorInfo)) {
-                monitorRects->push_back(monitorInfo.rcMonitor);
-            }
-            return TRUE;
-        },
-        reinterpret_cast<LPARAM>(&rects));
-    return rects;
 }
 
 int GetDpiForPoint(POINT pt) {

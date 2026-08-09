@@ -47,6 +47,8 @@ bool App::Init() {
 
     m_state = m_settings.Load();
     m_controller.SetBrightnessMode(m_state.mode);
+    m_controller.SetMonitorSelection(m_state.monitors);
+    m_controller.SetEnabled(m_state.enabled);
     m_controller.SetBrightness(m_state.brightness);
 
     if (!CreateMsgWindow()) {
@@ -200,6 +202,7 @@ void App::SetBrightnessMode(BrightnessMode mode) {
 
 void App::SetEnabled(bool enabled) {
     m_state.enabled = enabled;
+    m_controller.SetEnabled(enabled);
     m_settings.Save(m_state);
     UpdateTrayIcon(m_controller.GetBrightness());
 }

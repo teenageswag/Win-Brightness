@@ -1,4 +1,7 @@
 #pragma once
+
+#include "../brightness/BrightnessTypes.h"
+#include <string>
 #include <vector>
 #include <windows.h>
 
@@ -10,12 +13,17 @@ public:
     DimOverlay(const DimOverlay&) = delete;
     DimOverlay& operator=(const DimOverlay&) = delete;
 
-    void Apply(int percent);
+    void Apply(int percent, const std::vector<MonitorInfo>& monitors);
     void Destroy();
 
 private:
+    struct OverlayWindow {
+        std::wstring monitorId;
+        HWND handle = nullptr;
+    };
+
     bool RegisterWindowClass();
     BYTE AlphaFromPercent(int percent) const;
 
-    std::vector<HWND> m_windows;
+    std::vector<OverlayWindow> m_windows;
 };
