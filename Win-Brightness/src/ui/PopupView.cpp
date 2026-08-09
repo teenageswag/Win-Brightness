@@ -635,14 +635,14 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
             Pen windowBorder(ToGdiColor(palette.border), 1.0f);
             graphics.DrawRectangle(&windowBorder, 0, 0, width - 1, height - 1);
 
-            const int padding = ScaleByDpi(24, dpi);
-            DrawText(graphics, L"trenches", title,
-                     {padding, ScaleByDpi(20, dpi), layout.power.left - ScaleByDpi(130, dpi), ScaleByDpi(68, dpi)},
-                     palette.text);
+            const int padding = ScaleByDpi(15, dpi);
+            DrawText(graphics, L"trenches", eyebrow,
+                { padding, ScaleByDpi(20, dpi), padding + ScaleByDpi(70, dpi), ScaleByDpi(68, dpi) },
+                palette.muted);
+
             DrawText(graphics, m_state.hotkeyAvailable ? L"CTRL+ALT+B" : L"TRAY CLICK", eyebrow,
-                     {layout.power.left - ScaleByDpi(132, dpi), ScaleByDpi(20, dpi),
-                      layout.power.left - ScaleByDpi(12, dpi), ScaleByDpi(68, dpi)},
-                     palette.muted, StringAlignmentFar);
+                { padding + ScaleByDpi(75, dpi), ScaleByDpi(20, dpi), layout.power.left - ScaleByDpi(12, dpi), ScaleByDpi(68, dpi) },
+                palette.muted);
 
             const bool powerHovered = m_hover.kind == FocusKind::Power;
             FillAndBorder(
