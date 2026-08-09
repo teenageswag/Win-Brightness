@@ -20,14 +20,12 @@ public:
     HardwareBrightness& operator=(const HardwareBrightness&) = delete;
 
     void RefreshMonitors(std::vector<MonitorInfo>& monitors);
-    int ReadBrightness(const std::vector<std::wstring>& monitorIds);
     bool ApplyBrightness(int percent, const std::vector<std::wstring>& monitorIds);
     void ReleaseMonitors();
 
 private:
     struct CachedPhysicalMonitor {
         PHYSICAL_MONITOR monitor{};
-        DWORD minBrightness = 0;
         DWORD maxBrightness = 100;
     };
 
