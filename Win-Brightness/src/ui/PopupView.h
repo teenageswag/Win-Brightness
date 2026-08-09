@@ -1,94 +1,119 @@
 #pragma once
-#include "../brightness/BrightnessController.h"
+
+#include "../brightness/BrightnessTypes.h"
+#include <functional>
 #include <gdiplus.h>
+#include <vector>
 #include <windows.h>
+
+struct PopupState {
+    int brightness = kDefaultBrightness;
+    bool enabled = true;
+    BrightnessMode mode = BrightnessMode::Software;
+    MonitorSelection selection;
+    std::vector<MonitorInfo> monitors;
+    bool autostart = false;
+    bool hotkeyAvailable = true;
+};
+
+struct PopupActions {
+    std::function<void(int)> setBrightness;
+    std::function<void(bool)> setEnabled;
+    std::function<void(BrightnessMode)> setMode;
+    std::function<void(MonitorSelection)> setSelection;
+    std::function<void(bool)> setAutostart;
+};
 
 class PopupView {
 public:
-    PopupView(HINSTANCE hInstance, BrightnessController& controller);
+    PopupView(HINSTANCE hInstance, PopupActions actions);
     ~PopupView();
 
     bool Register();
     bool Create();
-    void Toggle(POINT cursorPt, bool keyboardInvoked = false);
+    void Toggle(POINT monitorPoint, bool keyboardInvoked = false);
     void Hide();
     bool IsVisible() const;
     HWND GetHWnd() const { return m_hWnd; }
 
-    void SetEnabled(bool enabled);
-    bool IsEnabled() const { return m_isEnabled; }
-    void UpdateFromController();
-
-    LRESULT HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+    void SetState(PopupState state);
+    LRESULT HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 
 private:
-    static constexpr int kBaseHeight = 40;
-    static constexpr int kBasePaddingH = 14;
-    static constexpr int kBasePaddingV = 8;
+    static constexpr int kBaseWidth = 620;
+    static constexpr int kBaseHeight = 600;
+    static constexpr int kBaseMinimumHeight = 514;
+    static constexpr UINT_PTR kBrightnessTimerId = 1;
+    static constexpr DWORD kBrightnessDelayMs = 70;
 
-    static constexpr int kBaseToggleW = 28;
-    static constexpr int kBaseToggleH = 14;
-    static constexpr int kBaseToggleThumb = 10;
+    enum class FocusKind {
+        None,
+        Power,
+        Slider,
+        SoftwareMode,
+        HardwareMode,
+        AllDisplays,
+        SelectedDisplays,
+        Monitor,
+        Autostart
+    };
 
-    static constexpr int kBaseToggleTrackGap = 10;
+    struct FocusTarget {
+        FocusKind kind = FocusKind::None;
+        size_t monitorIndex = 0;
 
-    static constexpr int kBaseTrackH = 4;
-    static constexpr int kBaseThumbRadius = 5;
-
-    static constexpr int kBaseTrackLabelGap = 8;
-
-    static constexpr int kBaseLabelW = 38;
-
-    static constexpr int kBaseWidth = 280;
-
-    static constexpr UINT_PTR kAutoHideTimerId = 1;
-    static constexpr UINT_PTR kDebounceTimerId = 2;
-    static constexpr DWORD kAutoHideDelayMs = 5555;
-    static constexpr DWORD kDebounceDelayMs = 80;
-
-    enum class FocusTarget {
-        Toggle,
-        Slider
+        bool operator==(const FocusTarget&) const = default;
     };
 
     struct Layout {
-        int centerY = 0;
+        RECT power{};
+        RECT brightnessCard{};
+        RECT sliderHit{};
+        RECT softwareMode{};
+        RECT hardwareMode{};
+        RECT allDisplays{};
+        RECT selectedDisplays{};
+        RECT monitorViewport{};
+        RECT autostart{};
+        std::vector<RECT> monitorItems;
+        int sliderLeft = 0;
+        int sliderRight = 0;
+        int sliderY = 0;
+        int monitorItemHeight = 0;
+        int monitorItemGap = 0;
 
-        RECT toggle{};
-
-        int trackLeft = 0;
-        int trackRight = 0;
-        int trackCenterY = 0;
-        int trackH = 0;
-
-        Gdiplus::RectF labelRect{};
-
-        void Compute(const RECT& client, int dpi);
+        void Compute(const RECT& client, int dpi, size_t monitorCount, int scrollOffset);
     };
 
-    HINSTANCE m_hInstance;
+    HINSTANCE m_hInstance = nullptr;
     HWND m_hWnd = nullptr;
-    BrightnessController& m_controller;
-    bool m_isDragging = false;
-    ULONGLONG m_showTime = 0;
-    int m_displayBrightness = 50;
-    bool m_hasPendingBrightness = false;
-    bool m_isEnabled = true;
-    int m_savedBrightness = 50;
-    FocusTarget m_focusTarget = FocusTarget::Slider;
+    PopupActions m_actions;
+    PopupState m_state;
+    FocusTarget m_focus{FocusKind::Slider, 0};
+    FocusTarget m_hover;
+    FocusTarget m_pressed;
     bool m_showKeyboardFocus = false;
+    bool m_isDragging = false;
+    bool m_trackingMouse = false;
+    bool m_hasPendingBrightness = false;
+    int m_scrollOffset = 0;
+    ULONGLONG m_showTime = 0;
 
-    void ResetAutoHideTimer();
-    void ResetDebounceTimer();
-    void CommitPendingBrightness();
-    void SetDisplayedBrightness(int percent);
-    void SetFocusTarget(FocusTarget target);
-    void SetKeyboardFocusVisible(bool visible);
+    Layout BuildLayout() const;
+    std::vector<FocusTarget> FocusOrder() const;
+    FocusTarget HitTest(POINT point, const Layout& layout) const;
+    RECT RectForTarget(const FocusTarget& target, const Layout& layout) const;
+
+    void SetFocusTarget(FocusTarget target, bool keyboardFocus);
+    void MoveFocus(bool backwards);
+    void EnsureFocusedMonitorVisible();
+    void Activate(const FocusTarget& target);
     void UpdateAccessibleName();
-    void NotifyOwnerBrightnessChanged(int percent);
-    void NotifyOwnerEnabledChanged(bool enabled);
 
-    Layout BuildLayout(int dpi) const;
-
-    int XToPercent(int x, const Layout& layout) const;
+    int XToBrightness(int x, const Layout& layout) const;
+    void SetDisplayedBrightness(int percent);
+    void QueueBrightnessCommit();
+    void CommitBrightness();
+    void ScrollMonitors(int direction);
+    int MaximumScroll(const Layout& layout) const;
 };

@@ -1,31 +1,38 @@
 #include "App.h"
 #include "../resources/resources.h"
+#include <algorithm>
 #include <cwchar>
 
 namespace {
     constexpr UINT kTrayIconId = 1;
-    const wchar_t* ModeLabel(BrightnessMode mode) { return mode == BrightnessMode::Software ? L"Software" : L"Hardware"; }
+    constexpr int kToggleHotkeyId = 1;
 
     LRESULT CALLBACK StaticAppWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
         App* app = nullptr;
         if (message == WM_NCCREATE) {
-            auto* createStruct = reinterpret_cast<LPCREATESTRUCT>(lParam);
-            app = static_cast<App*>(createStruct->lpCreateParams);
+            auto* create = reinterpret_cast<LPCREATESTRUCT>(lParam);
+            app = static_cast<App*>(create->lpCreateParams);
             SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
         } else {
             app = reinterpret_cast<App*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
         }
-    
-        return app ? app->HandleMessage(hWnd, message, wParam, lParam) : DefWindowProc(hWnd, message, wParam, lParam);
+
+        return app ? app->HandleMessage(hWnd, message, wParam, lParam)
+                   : DefWindowProc(hWnd, message, wParam, lParam);
     }
 } // namespace
 
 App::App(HINSTANCE hInstance) : m_hInstance(hInstance) {
-    m_hAppIcon = static_cast<HICON>(
-        LoadImage(m_hInstance, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
+    m_hAppIcon = static_cast<HICON>(LoadImage(
+        m_hInstance, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
 }
 
 App::~App() {
+    if (m_hotkeyRegistered && m_hMsgWnd) {
+        UnregisterHotKey(m_hMsgWnd, kToggleHotkeyId);
+        m_hotkeyRegistered = false;
+    }
     RemoveTrayIcon();
     m_popup.reset();
 
@@ -33,76 +40,93 @@ App::~App() {
         DestroyWindow(m_hMsgWnd);
         m_hMsgWnd = nullptr;
     }
-
     if (m_hAppIcon) {
         DestroyIcon(m_hAppIcon);
         m_hAppIcon = nullptr;
     }
+    if (m_instanceMutex) {
+        ReleaseMutex(m_instanceMutex);
+        CloseHandle(m_instanceMutex);
+        m_instanceMutex = nullptr;
+    }
 }
 
 bool App::Init() {
-    if (!m_controller.Init()) {
+    m_instanceMutex = CreateMutex(nullptr, TRUE, L"Local\\WinBrightness.SingleInstance");
+    if (!m_instanceMutex || GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (HWND existing = FindWindow(L"WinBrightnessMessageWindow", nullptr)) {
+            PostMessage(existing, WM_USER_SHOW_POPUP, 0, 0);
+        }
+        if (m_instanceMutex) {
+            CloseHandle(m_instanceMutex);
+            m_instanceMutex = nullptr;
+        }
         return false;
     }
 
     m_state = m_settings.Load();
+    m_autostartEnabled = m_settings.IsAutostartEnabled();
+
     m_controller.SetBrightnessMode(m_state.mode);
     m_controller.SetMonitorSelection(m_state.monitors);
     m_controller.SetEnabled(m_state.enabled);
     m_controller.SetBrightness(m_state.brightness);
+    if (!m_controller.Init()) {
+        return false;
+    }
 
+    NormalizeMonitorSelection();
     if (!CreateMsgWindow()) {
         return false;
     }
 
-    m_popup = std::make_unique<PopupView>(m_hInstance, m_controller);
+    PopupActions actions;
+    actions.setBrightness = [this](int brightness) { SetBrightness(brightness); };
+    actions.setEnabled = [this](bool enabled) { SetEnabled(enabled); };
+    actions.setMode = [this](BrightnessMode mode) { SetBrightnessMode(mode); };
+    actions.setSelection = [this](MonitorSelection selection) { SetMonitorSelection(std::move(selection)); };
+    actions.setAutostart = [this](bool enabled) { SetAutostartEnabled(enabled); };
+
+    m_popup = std::make_unique<PopupView>(m_hInstance, std::move(actions));
     if (!m_popup->Register() || !m_popup->Create()) {
         m_popup.reset();
         return false;
     }
-
-    // Sync enabled state to popup (without triggering brightness changes on startup)
-    if (!m_state.enabled && m_popup) {
-        m_popup->SetEnabled(false);
-    }
-
     SetWindowLongPtr(m_popup->GetHWnd(), GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(m_hMsgWnd));
+
+    m_hotkeyRegistered = RegisterHotKey(
+        m_hMsgWnd, kToggleHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, static_cast<UINT>('B')) != FALSE;
     m_msgTaskbarCreated = RegisterWindowMessage(L"TaskbarCreated");
     AddTrayIcon();
-
+    SyncPopup();
     return true;
 }
 
 int App::Run() {
-    MSG msg{};
+    MSG message{};
     while (true) {
-        const BOOL result = GetMessage(&msg, nullptr, 0, 0);
+        const BOOL result = GetMessage(&message, nullptr, 0, 0);
         if (result > 0) {
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
+            TranslateMessage(&message);
+            DispatchMessage(&message);
             continue;
         }
-
-        return result == 0 ? static_cast<int>(msg.wParam) : 1;
+        return result == 0 ? static_cast<int>(message.wParam) : 1;
     }
 }
 
 bool App::CreateMsgWindow() {
-    WNDCLASSEX wcex = {sizeof(wcex)};
-    wcex.lpfnWndProc = StaticAppWndProc;
-    wcex.hInstance = m_hInstance;
-    wcex.lpszClassName = L"ScreenBrightnessMessageWindowClass";
-
-    if (!RegisterClassEx(&wcex) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+    WNDCLASSEX windowClass{sizeof(windowClass)};
+    windowClass.lpfnWndProc = StaticAppWndProc;
+    windowClass.hInstance = m_hInstance;
+    windowClass.lpszClassName = L"WinBrightnessMessageWindow";
+    if (!RegisterClassEx(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         return false;
     }
 
     m_hMsgWnd = CreateWindowEx(
-        0,
-        L"ScreenBrightnessMessageWindowClass", L"Brightness Message Handler",
-        0, 0, 0, 0, 0,
-        nullptr, nullptr, m_hInstance, this);
-
+        0, L"WinBrightnessMessageWindow", L"Win-Brightness",
+        0, 0, 0, 0, 0, nullptr, nullptr, m_hInstance, this);
     return m_hMsgWnd != nullptr;
 }
 
@@ -111,115 +135,196 @@ void App::AddTrayIcon() {
         return;
     }
 
-    NOTIFYICONDATA nid = {sizeof(nid)};
-    nid.hWnd = m_hMsgWnd;
-    nid.uID = kTrayIconId;
-    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-    nid.uCallbackMessage = WM_USER_SHELLICON;
-    nid.hIcon = m_hAppIcon;
-    swprintf_s(nid.szTip, L"Brightness: %d%% [%s]", m_controller.GetBrightness(), ModeLabel(m_state.mode));
+    NOTIFYICONDATA icon{sizeof(icon)};
+    icon.hWnd = m_hMsgWnd;
+    icon.uID = kTrayIconId;
+    icon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    icon.uCallbackMessage = WM_USER_SHELLICON;
+    icon.hIcon = m_hAppIcon;
+    swprintf_s(
+        icon.szTip,
+        m_state.enabled ? L"Win-Brightness · %d%% · Ctrl+Alt+B" : L"Win-Brightness · Paused · Ctrl+Alt+B",
+        m_state.brightness);
 
-    bool iconUpdated = false;
-    if (Shell_NotifyIcon(NIM_ADD, &nid)) {
+    bool updated = false;
+    if (Shell_NotifyIcon(NIM_ADD, &icon)) {
         m_trayIconAdded = true;
-        iconUpdated = true;
-    } else if (m_trayIconAdded && Shell_NotifyIcon(NIM_MODIFY, &nid)) {
-        iconUpdated = true;
+        updated = true;
+    } else if (m_trayIconAdded && Shell_NotifyIcon(NIM_MODIFY, &icon)) {
+        updated = true;
     }
 
-    if (iconUpdated) {
-        nid.uVersion = NOTIFYICON_VERSION_4;
-        m_trayUsesVersion4 = Shell_NotifyIcon(NIM_SETVERSION, &nid) != FALSE;
+    if (updated) {
+        icon.uVersion = NOTIFYICON_VERSION_4;
+        m_trayUsesVersion4 = Shell_NotifyIcon(NIM_SETVERSION, &icon) != FALSE;
     }
 }
 
 void App::RemoveTrayIcon() {
-    if (m_hMsgWnd && m_trayIconAdded) {
-        NOTIFYICONDATA nid = {sizeof(nid)};
-        nid.hWnd = m_hMsgWnd;
-        nid.uID = kTrayIconId;
-        Shell_NotifyIcon(NIM_DELETE, &nid);
-        m_trayIconAdded = false;
-        m_trayUsesVersion4 = false;
-    }
-}
-
-void App::UpdateTrayIcon(int percent) {
     if (!m_hMsgWnd || !m_trayIconAdded) {
         return;
     }
 
-    NOTIFYICONDATA nid = {sizeof(nid)};
-    nid.hWnd = m_hMsgWnd;
-    nid.uID = kTrayIconId;
-    nid.uFlags = NIF_TIP;
-    if (m_state.enabled) {
-        swprintf_s(nid.szTip, L"Brightness: %d%% [%s]", percent, ModeLabel(m_state.mode));
-    } else {
-        swprintf_s(nid.szTip, L"Brightness: OFF [%s]", ModeLabel(m_state.mode));
-    }
-    Shell_NotifyIcon(NIM_MODIFY, &nid);
+    NOTIFYICONDATA icon{sizeof(icon)};
+    icon.hWnd = m_hMsgWnd;
+    icon.uID = kTrayIconId;
+    Shell_NotifyIcon(NIM_DELETE, &icon);
+    m_trayIconAdded = false;
+    m_trayUsesVersion4 = false;
 }
 
-void App::ShowContextMenu(POINT pt) {
-    HMENU hMenu = CreatePopupMenu();
-    HMENU hModeMenu = CreatePopupMenu();
-    if (!hMenu || !hModeMenu) {
-        if (hModeMenu) {
-            DestroyMenu(hModeMenu);
-        }
-        if (hMenu) {
-            DestroyMenu(hMenu);
-        }
+void App::UpdateTrayIcon() {
+    if (!m_hMsgWnd || !m_trayIconAdded) {
         return;
     }
 
-    const UINT autoState = m_settings.IsAutostartEnabled() ? MF_CHECKED : MF_UNCHECKED;
-    AppendMenu(hMenu, MF_STRING | autoState, ID_MENU_AUTOSTART, L"Run at startup");
-    AppendMenu(hMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenu(hModeMenu, MF_STRING | (m_state.mode == BrightnessMode::Hardware ? MF_CHECKED : MF_UNCHECKED), ID_MENU_MODE_HARDWARE, L"Hardware");
-    AppendMenu(hModeMenu, MF_STRING | (m_state.mode == BrightnessMode::Software ? MF_CHECKED : MF_UNCHECKED), ID_MENU_MODE_SOFTWARE, L"Software");
-    AppendMenu(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hModeMenu), L"Brightness mode");
-    AppendMenu(hMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenu(hMenu, MF_STRING, ID_MENU_EXIT, L"Exit");
+    size_t targetCount = 0;
+    for (const MonitorInfo& monitor : m_controller.GetMonitors()) {
+        if (m_state.monitors.Contains(monitor.id)) {
+            ++targetCount;
+        }
+    }
+
+    NOTIFYICONDATA icon{sizeof(icon)};
+    icon.hWnd = m_hMsgWnd;
+    icon.uID = kTrayIconId;
+    icon.uFlags = NIF_TIP;
+    if (m_state.enabled) {
+        swprintf_s(icon.szTip, L"Win-Brightness · %d%% · %zu display%s",
+                   m_state.brightness, targetCount, targetCount == 1 ? L"" : L"s");
+    } else {
+        swprintf_s(icon.szTip, L"Win-Brightness · Paused · Ctrl+Alt+B");
+    }
+    Shell_NotifyIcon(NIM_MODIFY, &icon);
+}
+
+void App::ShowContextMenu(POINT point) {
+    HMENU menu = CreatePopupMenu();
+    if (!menu) {
+        return;
+    }
+
+    AppendMenu(menu, MF_STRING, ID_MENU_SHOW, L"Open brightness");
+    AppendMenu(menu, MF_STRING, ID_MENU_TOGGLE_ENABLED, m_state.enabled ? L"Pause dimming" : L"Resume dimming");
+    AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenu(menu, MF_STRING | (m_autostartEnabled ? MF_CHECKED : MF_UNCHECKED), ID_MENU_AUTOSTART, L"Start with Windows");
+    AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenu(menu, MF_STRING, ID_MENU_EXIT, L"Exit");
+    SetMenuDefaultItem(menu, ID_MENU_SHOW, FALSE);
 
     SetForegroundWindow(m_hMsgWnd);
-    TrackPopupMenu(hMenu, TPM_LEFTALIGN | TPM_RIGHTBUTTON, pt.x, pt.y, 0, m_hMsgWnd, nullptr);
+    TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON, point.x, point.y, 0, m_hMsgWnd, nullptr);
     PostMessage(m_hMsgWnd, WM_NULL, 0, 0);
-    DestroyMenu(hMenu);
+    DestroyMenu(menu);
+}
+
+void App::TogglePopup(POINT monitorPoint, bool keyboardInvoked) {
+    if (!m_popup) {
+        return;
+    }
+    SyncPopup();
+    m_popup->Toggle(monitorPoint, keyboardInvoked);
+}
+
+void App::SyncPopup() {
+    if (!m_popup) {
+        return;
+    }
+
+    PopupState popupState;
+    popupState.brightness = m_state.brightness;
+    popupState.enabled = m_state.enabled;
+    popupState.mode = m_state.mode;
+    popupState.selection = m_state.monitors;
+    popupState.monitors = m_controller.GetMonitors();
+    popupState.autostart = m_autostartEnabled;
+    popupState.hotkeyAvailable = m_hotkeyRegistered;
+    m_popup->SetState(std::move(popupState));
+}
+
+void App::SetBrightness(int percent) {
+    m_state.brightness = ClampBrightness(percent);
+    m_controller.SetBrightness(m_state.brightness);
+    m_settings.Save(m_state);
+    UpdateTrayIcon();
+    SyncPopup();
 }
 
 void App::SetBrightnessMode(BrightnessMode mode) {
     m_state.mode = mode;
-    m_controller.SetBrightnessMode(m_state.mode);
+    m_controller.SetBrightnessMode(mode);
     m_settings.Save(m_state);
-    UpdateTrayIcon(m_controller.GetBrightness());
-
-    if (m_popup) {
-        m_popup->UpdateFromController();
-    }
+    UpdateTrayIcon();
+    SyncPopup();
 }
 
 void App::SetEnabled(bool enabled) {
     m_state.enabled = enabled;
     m_controller.SetEnabled(enabled);
     m_settings.Save(m_state);
-    UpdateTrayIcon(m_controller.GetBrightness());
+    UpdateTrayIcon();
+    SyncPopup();
+}
+
+void App::SetMonitorSelection(MonitorSelection selection) {
+    if (!selection.all && selection.ids.empty()) {
+        const std::vector<MonitorInfo> monitors = m_controller.GetMonitors();
+        if (!monitors.empty()) {
+            selection.ids.push_back(monitors.front().id);
+        }
+    }
+
+    m_state.monitors = std::move(selection);
+    m_controller.SetMonitorSelection(m_state.monitors);
+    m_settings.Save(m_state);
+    UpdateTrayIcon();
+    SyncPopup();
+}
+
+void App::SetAutostartEnabled(bool enabled) {
+    m_settings.SetAutostartEnabled(enabled);
+    m_autostartEnabled = m_settings.IsAutostartEnabled();
+    SyncPopup();
+}
+
+void App::NormalizeMonitorSelection() {
+    if (m_state.monitors.all || !m_state.monitors.ids.empty()) {
+        return;
+    }
+
+    const std::vector<MonitorInfo> monitors = m_controller.GetMonitors();
+    if (!monitors.empty()) {
+        m_state.monitors.ids.push_back(monitors.front().id);
+        m_controller.SetMonitorSelection(m_state.monitors);
+        m_settings.Save(m_state);
+    }
 }
 
 POINT App::GetTrayIconPosition() const {
-    NOTIFYICONIDENTIFIER identifier = {sizeof(identifier)};
+    NOTIFYICONIDENTIFIER identifier{sizeof(identifier)};
     identifier.hWnd = m_hMsgWnd;
     identifier.uID = kTrayIconId;
 
     RECT rect{};
     if (SUCCEEDED(Shell_NotifyIconGetRect(&identifier, &rect))) {
-        return POINT{(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
+        return {(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
     }
 
-    POINT pt{};
-    GetCursorPos(&pt);
-    return pt;
+    POINT point{};
+    GetCursorPos(&point);
+    return point;
+}
+
+POINT App::GetActiveMonitorPoint() const {
+    const HWND foreground = GetForegroundWindow();
+    RECT rect{};
+    if (foreground && GetWindowRect(foreground, &rect)) {
+        return {(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
+    }
+
+    POINT point{};
+    GetCursorPos(&point);
+    return point;
 }
 
 LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -229,75 +334,56 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
     }
 
     switch (message) {
+    case WM_USER_SHOW_POPUP:
+        if (!m_popup || !m_popup->IsVisible()) TogglePopup(GetActiveMonitorPoint(), false);
+        return 0;
+
     case WM_USER_SHELLICON:
         switch (LOWORD(lParam)) {
         case NIN_SELECT:
-            if (m_trayUsesVersion4 && m_popup) {
-                m_popup->Toggle(GetTrayIconPosition(), false);
-            }
+            if (m_trayUsesVersion4) TogglePopup(GetTrayIconPosition(), false);
             break;
         case NIN_KEYSELECT:
-            if (m_trayUsesVersion4 && m_popup) {
-                m_popup->Toggle(GetTrayIconPosition(), true);
-            }
+            if (m_trayUsesVersion4) TogglePopup(GetTrayIconPosition(), true);
             break;
         case WM_LBUTTONUP:
-            if (!m_trayUsesVersion4 && m_popup) {
-                m_popup->Toggle(GetTrayIconPosition(), false);
-            }
+            if (!m_trayUsesVersion4) TogglePopup(GetTrayIconPosition(), false);
             break;
         case WM_CONTEXTMENU:
-            if (m_trayUsesVersion4) {
-                ShowContextMenu(GetTrayIconPosition());
-            }
+            if (m_trayUsesVersion4) ShowContextMenu(GetTrayIconPosition());
             break;
-        case WM_RBUTTONUP: {
-            if (!m_trayUsesVersion4) {
-                ShowContextMenu(GetTrayIconPosition());
-            }
+        case WM_RBUTTONUP:
+            if (!m_trayUsesVersion4) ShowContextMenu(GetTrayIconPosition());
             break;
-        }
         }
         return 0;
 
-    case WM_USER_BRIGHTNESS_CHANGED: {
-        const int newPercent = ClampBrightness(static_cast<int>(wParam));
-        m_state.brightness = newPercent;
-        m_settings.Save(m_state);
-        UpdateTrayIcon(newPercent);
+    case WM_HOTKEY:
+        if (static_cast<int>(wParam) == kToggleHotkeyId) {
+            TogglePopup(GetActiveMonitorPoint(), true);
+        }
         return 0;
-    }
-
-    case WM_USER_ENABLED_CHANGED: {
-        const bool enabled = wParam != 0;
-        SetEnabled(enabled);
-        return 0;
-    }
 
     case WM_DISPLAYCHANGE:
         m_controller.RefreshMonitors();
-        m_controller.SetBrightnessMode(m_state.mode);
-        UpdateTrayIcon(m_controller.GetBrightness());
-        if (m_popup) {
-            m_popup->UpdateFromController();
-        }
+        NormalizeMonitorSelection();
+        UpdateTrayIcon();
+        SyncPopup();
         return 0;
 
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
+        case ID_MENU_SHOW:
+            if (!m_popup || !m_popup->IsVisible()) TogglePopup(GetActiveMonitorPoint(), false);
+            break;
+        case ID_MENU_TOGGLE_ENABLED:
+            SetEnabled(!m_state.enabled);
+            break;
         case ID_MENU_AUTOSTART:
-            m_settings.SetAutostartEnabled(!m_settings.IsAutostartEnabled());
-            break;
-        case ID_MENU_MODE_HARDWARE:
-            SetBrightnessMode(BrightnessMode::Hardware);
-            break;
-        case ID_MENU_MODE_SOFTWARE:
-            SetBrightnessMode(BrightnessMode::Software);
+            SetAutostartEnabled(!m_autostartEnabled);
             break;
         case ID_MENU_EXIT:
-            if (m_popup) {
-                m_popup->Hide();
-            }
+            if (m_popup) m_popup->Hide();
             PostQuitMessage(0);
             break;
         }

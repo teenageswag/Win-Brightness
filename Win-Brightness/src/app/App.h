@@ -20,13 +20,21 @@ private:
     bool CreateMsgWindow();
     void AddTrayIcon();
     void RemoveTrayIcon();
-    void UpdateTrayIcon(int percent);
+    void UpdateTrayIcon();
     void ShowContextMenu(POINT pt);
+    void TogglePopup(POINT monitorPoint, bool keyboardInvoked);
+    void SyncPopup();
+    void SetBrightness(int percent);
     void SetBrightnessMode(BrightnessMode mode);
     void SetEnabled(bool enabled);
+    void SetMonitorSelection(MonitorSelection selection);
+    void SetAutostartEnabled(bool enabled);
+    void NormalizeMonitorSelection();
     POINT GetTrayIconPosition() const;
+    POINT GetActiveMonitorPoint() const;
 
     HINSTANCE m_hInstance;
+    HANDLE m_instanceMutex = nullptr;
     HWND m_hMsgWnd = nullptr;
     HICON m_hAppIcon = nullptr;
     BrightnessController m_controller;
@@ -34,6 +42,8 @@ private:
     AppSettings m_state;
     std::unique_ptr<PopupView> m_popup;
     UINT m_msgTaskbarCreated = 0;
+    bool m_autostartEnabled = false;
+    bool m_hotkeyRegistered = false;
     bool m_trayIconAdded = false;
     bool m_trayUsesVersion4 = false;
 };
