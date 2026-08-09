@@ -32,7 +32,7 @@ public:
     bool Register();
     bool Create();
     void Toggle(POINT monitorPoint, bool keyboardInvoked = false);
-    void Hide();
+    void Hide(bool animated = false);
     bool IsVisible() const;
     HWND GetHWnd() const { return m_hWnd; }
 
@@ -44,7 +44,10 @@ private:
     static constexpr int kBaseHeight = 600;
     static constexpr int kBaseMinimumHeight = 514;
     static constexpr UINT_PTR kBrightnessTimerId = 1;
+    static constexpr UINT_PTR kAutoHideTimerId = 2;
     static constexpr DWORD kBrightnessDelayMs = 70;
+    static constexpr DWORD kAutoHideDelayMs = 2000;
+    static constexpr DWORD kFadeDurationMs = 170;
 
     enum class FocusKind {
         None,
@@ -114,6 +117,8 @@ private:
     void SetDisplayedBrightness(int percent);
     void QueueBrightnessCommit();
     void CommitBrightness();
+    void ResetAutoHideTimer();
+    bool IsCursorOverWindow() const;
     void ScrollMonitors(int direction);
     int MaximumScroll(const Layout& layout) const;
 };

@@ -4,7 +4,7 @@
 #include <unordered_set>
 
 namespace {
-    constexpr const wchar_t* kDimOverlayClassName = L"WinBrightnessDimOverlay";
+    constexpr const wchar_t* kDimOverlayClassName = L"TrenchesDimOverlay";
     constexpr double kOverlayCurve = 0.82;
     constexpr int kMaxOverlayAlpha = 244;
 

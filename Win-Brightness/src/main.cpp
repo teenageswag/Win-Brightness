@@ -28,7 +28,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     Gdiplus::GdiplusStartupInput gdiplusStartupInput;
     const Gdiplus::Status gdiplusStatus = Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, nullptr);
     if (gdiplusStatus != Gdiplus::Ok) {
-        MessageBox(nullptr, L"Unable to initialize the Windows graphics subsystem.", L"Win-Brightness", MB_OK | MB_ICONERROR);
+        MessageBox(nullptr, L"Unable to initialize the Windows graphics subsystem.", L"trenches", MB_OK | MB_ICONERROR);
         return 1;
     }
     

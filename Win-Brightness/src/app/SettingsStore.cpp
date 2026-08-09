@@ -4,14 +4,14 @@
 #include <vector>
 
 namespace {
-    constexpr const wchar_t* kSettingsKey = L"Software\\Win-Brightness\\Settings";
+    constexpr const wchar_t* kSettingsKey = L"Software\\trenches\\Settings";
     constexpr const wchar_t* kBrightnessValue = L"Brightness";
     constexpr const wchar_t* kModeValue = L"Mode";
     constexpr const wchar_t* kEnabledValue = L"Enabled";
     constexpr const wchar_t* kAllMonitorsValue = L"AllMonitors";
     constexpr const wchar_t* kMonitorIdsValue = L"MonitorIds";
     constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-    constexpr const wchar_t* kRunValue = L"Win-Brightness";
+    constexpr const wchar_t* kRunValue = L"trenches";
 } // namespace
 
 bool SettingsStore::TryReadDword(const wchar_t* valueName, DWORD& value) const {

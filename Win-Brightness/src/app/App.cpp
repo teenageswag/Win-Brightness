@@ -52,9 +52,9 @@ App::~App() {
 }
 
 bool App::Init() {
-    m_instanceMutex = CreateMutex(nullptr, TRUE, L"Local\\WinBrightness.SingleInstance");
+    m_instanceMutex = CreateMutex(nullptr, TRUE, L"Local\\trenches.SingleInstance");
     if (!m_instanceMutex || GetLastError() == ERROR_ALREADY_EXISTS) {
-        if (HWND existing = FindWindow(L"WinBrightnessMessageWindow", nullptr)) {
+        if (HWND existing = FindWindow(L"TrenchesMessageWindow", nullptr)) {
             PostMessage(existing, WM_USER_SHOW_POPUP, 0, 0);
         }
         if (m_instanceMutex) {
@@ -119,13 +119,13 @@ bool App::CreateMsgWindow() {
     WNDCLASSEX windowClass{sizeof(windowClass)};
     windowClass.lpfnWndProc = StaticAppWndProc;
     windowClass.hInstance = m_hInstance;
-    windowClass.lpszClassName = L"WinBrightnessMessageWindow";
+    windowClass.lpszClassName = L"TrenchesMessageWindow";
     if (!RegisterClassEx(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         return false;
     }
 
     m_hMsgWnd = CreateWindowEx(
-        0, L"WinBrightnessMessageWindow", L"Win-Brightness",
+        0, L"TrenchesMessageWindow", L"trenches",
         0, 0, 0, 0, 0, nullptr, nullptr, m_hInstance, this);
     return m_hMsgWnd != nullptr;
 }
@@ -143,7 +143,7 @@ void App::AddTrayIcon() {
     icon.hIcon = m_hAppIcon;
     swprintf_s(
         icon.szTip,
-        m_state.enabled ? L"Win-Brightness · %d%% · Ctrl+Alt+B" : L"Win-Brightness · Paused · Ctrl+Alt+B",
+        m_state.enabled ? L"trenches · %d%% · Ctrl+Alt+B" : L"trenches · Paused · Ctrl+Alt+B",
         m_state.brightness);
 
     bool updated = false;
@@ -190,10 +190,10 @@ void App::UpdateTrayIcon() {
     icon.uID = kTrayIconId;
     icon.uFlags = NIF_TIP;
     if (m_state.enabled) {
-        swprintf_s(icon.szTip, L"Win-Brightness · %d%% · %zu display%s",
+        swprintf_s(icon.szTip, L"trenches · %d%% · %zu display%s",
                    m_state.brightness, targetCount, targetCount == 1 ? L"" : L"s");
     } else {
-        swprintf_s(icon.szTip, L"Win-Brightness · Paused · Ctrl+Alt+B");
+        swprintf_s(icon.szTip, L"trenches · Paused · Ctrl+Alt+B");
     }
     Shell_NotifyIcon(NIM_MODIFY, &icon);
 }

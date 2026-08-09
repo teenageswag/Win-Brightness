@@ -234,14 +234,14 @@ bool PopupView::Register() {
     windowClass.lpfnWndProc = PopupWndProc;
     windowClass.hInstance = m_hInstance;
     windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    windowClass.lpszClassName = L"WinBrightnessControlCenter";
+    windowClass.lpszClassName = L"TrenchesControlCenter";
     return RegisterClassEx(&windowClass) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
 }
 
 bool PopupView::Create() {
     m_hWnd = CreateWindowEx(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-        L"WinBrightnessControlCenter", L"Win-Brightness",
+        L"TrenchesControlCenter", L"trenches",
         WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, kBaseWidth, kBaseHeight,
         nullptr, nullptr, m_hInstance, this);
     return m_hWnd != nullptr;
@@ -273,7 +273,8 @@ void PopupView::Toggle(POINT monitorPoint, bool keyboardInvoked) {
     const int x = info.rcWork.left + (workWidth - width) / 2;
     const int y = info.rcWork.top + (workHeight - height) / 2;
 
-    m_showKeyboardFocus = keyboardInvoked;
+    (void)keyboardInvoked;
+    m_showKeyboardFocus = false;
     m_focus = {FocusKind::Slider, 0};
     m_hover = {};
     m_pressed = {};
@@ -283,21 +284,32 @@ void PopupView::Toggle(POINT monitorPoint, bool keyboardInvoked) {
     SetForegroundWindow(m_hWnd);
     SetFocus(m_hWnd);
     UpdateAccessibleName();
+    ResetAutoHideTimer();
     InvalidateRect(m_hWnd, nullptr, FALSE);
 }
 
-void PopupView::Hide() {
+void PopupView::Hide(bool animated) {
     if (!m_hWnd) {
         return;
     }
     CommitBrightness();
     KillTimer(m_hWnd, kBrightnessTimerId);
+    KillTimer(m_hWnd, kAutoHideTimerId);
     if (GetCapture() == m_hWnd) {
         ReleaseCapture();
     }
     m_isDragging = false;
     m_pressed = {};
-    ShowWindow(m_hWnd, SW_HIDE);
+
+    BOOL animationsEnabled = TRUE;
+    SystemParametersInfo(SPI_GETCLIENTAREAANIMATION, 0, &animationsEnabled, 0);
+    if (animated && animationsEnabled) {
+        if (!AnimateWindow(m_hWnd, kFadeDurationMs, AW_BLEND | AW_HIDE)) {
+            ShowWindow(m_hWnd, SW_HIDE);
+        }
+    } else {
+        ShowWindow(m_hWnd, SW_HIDE);
+    }
 }
 
 bool PopupView::IsVisible() const {
@@ -509,7 +521,7 @@ void PopupView::UpdateAccessibleName() {
         name = m_state.autostart ? L"Start with Windows, on." : L"Start with Windows, off.";
         break;
     case FocusKind::None:
-        name = L"Win-Brightness";
+        name = L"trenches";
         break;
     }
 
@@ -550,6 +562,24 @@ void PopupView::CommitBrightness() {
     if (m_actions.setBrightness) {
         m_actions.setBrightness(m_state.brightness);
     }
+}
+
+void PopupView::ResetAutoHideTimer() {
+    if (!m_hWnd || !IsVisible()) {
+        return;
+    }
+    KillTimer(m_hWnd, kAutoHideTimerId);
+    SetTimer(m_hWnd, kAutoHideTimerId, kAutoHideDelayMs, nullptr);
+}
+
+bool PopupView::IsCursorOverWindow() const {
+    if (!m_hWnd) {
+        return false;
+    }
+
+    POINT cursor{};
+    RECT window{};
+    return GetCursorPos(&cursor) && GetWindowRect(m_hWnd, &window) && PtInRect(&window, cursor);
 }
 
 void PopupView::ScrollMonitors(int direction) {
@@ -606,15 +636,13 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
             graphics.DrawRectangle(&windowBorder, 0, 0, width - 1, height - 1);
 
             const int padding = ScaleByDpi(24, dpi);
-            const std::wstring eyebrowText = m_state.hotkeyAvailable
-                ? L"WIN-BRIGHTNESS  /  CTRL+ALT+B"
-                : L"WIN-BRIGHTNESS  /  TRAY CLICK";
-            DrawText(graphics, eyebrowText, eyebrow,
-                     {padding, ScaleByDpi(14, dpi), layout.power.left - ScaleByDpi(12, dpi), ScaleByDpi(36, dpi)},
-                     palette.muted);
-            DrawText(graphics, L"Display dimmer", title,
-                     {padding, ScaleByDpi(36, dpi), layout.power.left - ScaleByDpi(12, dpi), ScaleByDpi(72, dpi)},
+            DrawText(graphics, L"trenches", title,
+                     {padding, ScaleByDpi(20, dpi), layout.power.left - ScaleByDpi(130, dpi), ScaleByDpi(68, dpi)},
                      palette.text);
+            DrawText(graphics, m_state.hotkeyAvailable ? L"CTRL+ALT+B" : L"TRAY CLICK", eyebrow,
+                     {layout.power.left - ScaleByDpi(132, dpi), ScaleByDpi(20, dpi),
+                      layout.power.left - ScaleByDpi(12, dpi), ScaleByDpi(68, dpi)},
+                     palette.muted, StringAlignmentFar);
 
             const bool powerHovered = m_hover.kind == FocusKind::Power;
             FillAndBorder(
@@ -643,11 +671,11 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
             FillAndBorder(graphics, layout.brightnessCard, palette.surface, palette.border);
             DrawText(graphics, L"Brightness", section,
                      {layout.brightnessCard.left + ScaleByDpi(18, dpi), layout.brightnessCard.top + ScaleByDpi(10, dpi),
-                      layout.brightnessCard.right - ScaleByDpi(140, dpi), layout.brightnessCard.top + ScaleByDpi(34, dpi)},
-                     m_state.enabled ? palette.muted : palette.disabled);
+                      layout.brightnessCard.left + ScaleByDpi(104, dpi), layout.brightnessCard.top + ScaleByDpi(34, dpi)},
+                     palette.muted);
             DrawText(graphics, m_state.enabled ? L"Active" : L"Paused", detail,
-                     {layout.brightnessCard.left + ScaleByDpi(18, dpi), layout.brightnessCard.top + ScaleByDpi(36, dpi),
-                      layout.brightnessCard.right - ScaleByDpi(140, dpi), layout.brightnessCard.top + ScaleByDpi(58, dpi)},
+                     {layout.brightnessCard.left + ScaleByDpi(106, dpi), layout.brightnessCard.top + ScaleByDpi(10, dpi),
+                      layout.brightnessCard.right - ScaleByDpi(140, dpi), layout.brightnessCard.top + ScaleByDpi(34, dpi)},
                      m_state.enabled ? palette.accent : palette.muted);
             DrawText(graphics, std::to_wstring(m_state.brightness) + L"%", value,
                      {layout.brightnessCard.right - ScaleByDpi(150, dpi), layout.brightnessCard.top + ScaleByDpi(10, dpi),
@@ -741,7 +769,7 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
 
                 const int monitorWidth = monitor.bounds.right - monitor.bounds.left;
                 const int monitorHeight = monitor.bounds.bottom - monitor.bounds.top;
-                std::wstring monitorDetail = std::to_wstring(monitorWidth) + L" × " + std::to_wstring(monitorHeight);
+                std::wstring monitorDetail = std::to_wstring(monitorWidth) + L"x" + std::to_wstring(monitorHeight);
                 if (monitor.primary) monitorDetail += L"  ·  Primary";
                 monitorDetail += monitor.hardwareBrightness ? L"  ·  DDC/CI" : L"  ·  No DDC/CI";
                 DrawText(graphics, monitorDetail, detail,
@@ -812,6 +840,7 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     }
 
     case WM_LBUTTONDOWN: {
+        ResetAutoHideTimer();
         const Layout layout = BuildLayout();
         POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         const FocusTarget target = HitTest(point, layout);
@@ -831,6 +860,7 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     }
 
     case WM_MOUSEMOVE: {
+        ResetAutoHideTimer();
         if (!m_trackingMouse) {
             TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, hWnd, 0};
             TrackMouseEvent(&tracking);
@@ -855,10 +885,12 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     case WM_MOUSELEAVE:
         m_trackingMouse = false;
         m_hover = {};
+        ResetAutoHideTimer();
         InvalidateRect(hWnd, nullptr, FALSE);
         return 0;
 
     case WM_LBUTTONUP: {
+        ResetAutoHideTimer();
         const Layout layout = BuildLayout();
         POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         if (m_isDragging) {
@@ -874,6 +906,7 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     }
 
     case WM_MOUSEWHEEL: {
+        ResetAutoHideTimer();
         POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         ScreenToClient(hWnd, &point);
         const Layout layout = BuildLayout();
@@ -889,6 +922,7 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     }
 
     case WM_KEYDOWN: {
+        ResetAutoHideTimer();
         if (wParam == VK_ESCAPE) {
             Hide();
             return 0;
@@ -948,6 +982,14 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
             CommitBrightness();
             return 0;
         }
+        if (wParam == kAutoHideTimerId) {
+            if (m_isDragging || IsCursorOverWindow()) {
+                ResetAutoHideTimer();
+            } else {
+                Hide(true);
+            }
+            return 0;
+        }
         break;
 
     case WM_SETCURSOR:
@@ -968,7 +1010,9 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         return 0;
 
     case WM_KILLFOCUS:
-        if (GetTickCount64() - m_showTime > 200) Hide();
+        if (GetTickCount64() - m_showTime > 200) {
+            Hide();
+        }
         return 0;
 
     case WM_SETFOCUS:

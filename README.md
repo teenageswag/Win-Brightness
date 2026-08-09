@@ -1,93 +1,58 @@
-﻿# 💡 Win-Brightness — Windows Brightness Control
+# trenches
 
-> A lightweight application for controlling monitor brightness directly from the system tray.
+A small Windows utility for dimming one display, a custom group, or every connected display.
 
----
+## Features
 
-## ✨ Features
+- Per-display targeting with **All displays** and **Selected** scopes
+- **Software** mode with independent click-through overlays
+- **Hardware** mode using DDC/CI brightness control
+- Centered control panel opened from the tray or with `Ctrl+Alt+B`
+- Global pause/resume without losing the saved brightness value
+- Optional launch at Windows sign-in
+- Per-monitor DPI awareness, keyboard navigation, and Windows High Contrast support
+- Single-instance behavior: launching trenches again opens the existing control panel
 
-- 🖥️ **Hardware Mode** — manages brightness via DDC/CI (physical monitor control)
-- 🌑 **Software Mode** — dims the screen using a transparent overlay
-- 🔁 **Automatic Fallback** — if DDC/CI is unavailable, the app automatically switches to software mode
-- 📌 **Tray Icon** — quick access with the current brightness level displayed in the tooltip
-- 💾 **Settings Persistence** — brightness, mode, and state are saved in the registry between restarts
-- 🚀 **Run at Startup** — optional launch on Windows boot
-- 🎛️ **Popup Slider** — click the tray icon to open a convenient slider popup
+Hardware mode is available only when a display exposes the DDC/CI brightness VCP feature. Many televisions and some HDMI adapters do not expose it; those displays are marked `No DDC/CI` in the monitor list and remain available in Software mode.
 
----
+## Controls
 
-## 🖱️ Usage
+| Input | Action |
+| --- | --- |
+| `Ctrl+Alt+B` | Open or close the control panel on the active display |
+| Tray icon click | Open or close the control panel on the tray display |
+| `Tab` / `Shift+Tab` | Move between controls |
+| Arrow keys | Adjust brightness or move within grouped choices |
+| `Page Up` / `Page Down` | Adjust brightness by 10% |
+| `Home` / `End` | Set minimum or maximum brightness |
+| `Space` / `Enter` | Activate the focused control |
+| `Escape` | Close the control panel |
 
-| Action                       | Result                        |
-| ---------------------------- | ----------------------------- |
-| **Left Click** on tray icon  | Show / hide brightness slider |
-| **Right Click** on tray icon | Open context menu             |
-| Drag the slider              | Adjust brightness (1–100%)    |
-| Toggle in popup              | Enable / disable dimming      |
-| `Tab`                        | Move between toggle and slider |
-| Arrow keys / mouse wheel     | Adjust brightness by 1%       |
-| `Page Up` / `Page Down`      | Adjust brightness by 10%      |
-| `Home` / `End`               | Set minimum / maximum brightness |
-| `Space` / `Enter`            | Toggle dimming when the switch is focused |
-| `Escape`                     | Close the popup               |
+The panel closes immediately when it loses focus. After two seconds without interaction, it fades out when the pointer is outside the panel.
 
-### Context Menu
+## Build
 
-- **Run at startup** — add to or remove from Windows startup
-- **Brightness mode → Hardware / Software** — select the brightness control mode
-- **Exit** — close the application
+Requirements:
 
----
+- Windows 10 or 11
+- Visual Studio Build Tools with MSVC and the Windows SDK
+- C++23 support
 
-## 🏗️ Building
+Open `Win-Brightness.slnx` in Visual Studio and build `Release | x64`, or run MSBuild directly. The executable is written to:
 
-**Requirements:**
-
-- Windows 10 / 11
-- Visual Studio 2022/2026 (or a compatible MSVC toolchain)
-- Windows SDK
-
-**Steps:**
-
-1. Open `Win-Brightness.slnx` in Visual Studio
-2. Select the `Release | x64` configuration
-3. Build the project (`Ctrl+Shift+B`)
-
-The compiled binary will be located in `build/bin/x64/Release/`.
-
----
-
-## 📁 Project Structure
-
-```
-Win-Brightness/
-├── Win-Brightness/src/
-│   ├── main.cpp / main.h          # Entry point, GDI+ initialization
-│   ├── app/
-│   │   ├── App.cpp / App.h        # Main application class, message loop
-│   │   └── SettingsStore          # Registry-based settings persistence
-│   ├── brightness/
-│   │   ├── BrightnessController   # Thread-safe brightness controller
-│   │   ├── HardwareBrightness     # DDC/CI via physical monitors
-│   │   ├── SoftwareBrightness     # Win32-based dimming overlay
-│   │   └── BrightnessTypes.h      # Types and constants
-│   ├── ui/
-│   │   ├── PopupView              # Popup slider (GDI+, DPI-aware)
-│   │   └── DimOverlay             # Transparent overlay window
-│   ├── platform/
-│   │   └── Win32Helpers           # Win32 utilities
-│   └── resources/                 # Icon and assets
-└── build/                         # Build artifacts
-
+```text
+build/bin/x64/Release/trenches.exe
 ```
 
----
+## Architecture
 
-## ⚙️ Technologies
+```text
+Win-Brightness/src/
+├── app/          Application lifecycle and registry settings
+├── brightness/   Monitor catalog, controller, DDC/CI, and software dimming
+├── platform/     Small Win32 RAII and DPI helpers
+├── resources/    Application icon and Win32 resource identifiers
+└── ui/           Control panel and per-monitor overlay windows
+```
 
-- **C++23** — core language
-- **Win32 API** — windows, tray, messages
-- **GDI+ (Gdiplus)** — UI rendering
-- **DDC/CI** — hardware brightness control
-- **Windows Registry** — settings storage
-- **Multithreading** — background worker for applying brightness without blocking the UI
+The application uses Win32, GDI+, DXVA2 monitor APIs, the Windows registry, and a background worker for display I/O.
