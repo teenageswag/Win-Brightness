@@ -2,6 +2,8 @@
 
 A small Windows utility for dimming one display, a custom group, or every connected display.
 
+![trenches control panel](image/desktop.png)
+
 ## Features
 
 - Per-display targeting with **All displays** and **Selected** scopes
