@@ -45,11 +45,9 @@ bool App::Init() {
         return false;
     }
 
-    m_brightnessMode = m_settings.LoadBrightnessMode();
-    m_isEnabled = m_settings.LoadEnabled();
-    const bool didFallback = FallbackToSoftwareIfNeeded();
-    m_controller.SetBrightnessMode(m_brightnessMode);
-    m_controller.SetBrightness(m_settings.LoadBrightness(m_controller.GetBrightness()));
+    m_state = m_settings.Load();
+    m_controller.SetBrightnessMode(m_state.mode);
+    m_controller.SetBrightness(m_state.brightness);
 
     if (!CreateMsgWindow()) {
         return false;
@@ -62,17 +60,13 @@ bool App::Init() {
     }
 
     // Sync enabled state to popup (without triggering brightness changes on startup)
-    if (!m_isEnabled && m_popup) {
+    if (!m_state.enabled && m_popup) {
         m_popup->SetEnabled(false);
     }
 
     SetWindowLongPtr(m_popup->GetHWnd(), GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(m_hMsgWnd));
     m_msgTaskbarCreated = RegisterWindowMessage(L"TaskbarCreated");
     AddTrayIcon();
-
-    if (didFallback) {
-        ShowDdcFallbackBalloonOnce();
-    }
 
     return true;
 }
@@ -121,7 +115,7 @@ void App::AddTrayIcon() {
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_USER_SHELLICON;
     nid.hIcon = m_hAppIcon;
-    swprintf_s(nid.szTip, L"Brightness: %d%% [%s]", m_controller.GetBrightness(), ModeLabel(m_brightnessMode));
+    swprintf_s(nid.szTip, L"Brightness: %d%% [%s]", m_controller.GetBrightness(), ModeLabel(m_state.mode));
 
     bool iconUpdated = false;
     if (Shell_NotifyIcon(NIM_ADD, &nid)) {
@@ -157,28 +151,11 @@ void App::UpdateTrayIcon(int percent) {
     nid.hWnd = m_hMsgWnd;
     nid.uID = kTrayIconId;
     nid.uFlags = NIF_TIP;
-    if (m_isEnabled) {
-        swprintf_s(nid.szTip, L"Brightness: %d%% [%s]", percent, ModeLabel(m_brightnessMode));
+    if (m_state.enabled) {
+        swprintf_s(nid.szTip, L"Brightness: %d%% [%s]", percent, ModeLabel(m_state.mode));
     } else {
-        swprintf_s(nid.szTip, L"Brightness: OFF [%s]", ModeLabel(m_brightnessMode));
+        swprintf_s(nid.szTip, L"Brightness: OFF [%s]", ModeLabel(m_state.mode));
     }
-    Shell_NotifyIcon(NIM_MODIFY, &nid);
-}
-
-void App::ShowDdcFallbackBalloonOnce() {
-    if (!m_hMsgWnd || !m_trayIconAdded || m_ddcFallbackBalloonShown) {
-        return;
-    }
-
-    m_ddcFallbackBalloonShown = true;
-
-    NOTIFYICONDATA nid = {sizeof(nid)};
-    nid.hWnd = m_hMsgWnd;
-    nid.uID = kTrayIconId;
-    nid.uFlags = NIF_INFO;
-    nid.dwInfoFlags = NIIF_INFO;
-    swprintf_s(nid.szInfoTitle, L"Brightness");
-    swprintf_s(nid.szInfo, L"Hardware brightness is unavailable. Software mode is active.");
     Shell_NotifyIcon(NIM_MODIFY, &nid);
 }
 
@@ -198,8 +175,8 @@ void App::ShowContextMenu(POINT pt) {
     const UINT autoState = m_settings.IsAutostartEnabled() ? MF_CHECKED : MF_UNCHECKED;
     AppendMenu(hMenu, MF_STRING | autoState, ID_MENU_AUTOSTART, L"Run at startup");
     AppendMenu(hMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenu(hModeMenu, MF_STRING | (m_brightnessMode == BrightnessMode::Hardware ? MF_CHECKED : MF_UNCHECKED), ID_MENU_MODE_HARDWARE, L"Hardware");
-    AppendMenu(hModeMenu, MF_STRING | (m_brightnessMode == BrightnessMode::Software ? MF_CHECKED : MF_UNCHECKED), ID_MENU_MODE_SOFTWARE, L"Software");
+    AppendMenu(hModeMenu, MF_STRING | (m_state.mode == BrightnessMode::Hardware ? MF_CHECKED : MF_UNCHECKED), ID_MENU_MODE_HARDWARE, L"Hardware");
+    AppendMenu(hModeMenu, MF_STRING | (m_state.mode == BrightnessMode::Software ? MF_CHECKED : MF_UNCHECKED), ID_MENU_MODE_SOFTWARE, L"Software");
     AppendMenu(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hModeMenu), L"Brightness mode");
     AppendMenu(hMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenu(hMenu, MF_STRING, ID_MENU_EXIT, L"Exit");
@@ -211,15 +188,10 @@ void App::ShowContextMenu(POINT pt) {
 }
 
 void App::SetBrightnessMode(BrightnessMode mode) {
-    m_brightnessMode = mode;
-    const bool didFallback = FallbackToSoftwareIfNeeded();
-    m_controller.SetBrightnessMode(m_brightnessMode);
-    m_settings.SaveBrightnessMode(m_brightnessMode);
+    m_state.mode = mode;
+    m_controller.SetBrightnessMode(m_state.mode);
+    m_settings.Save(m_state);
     UpdateTrayIcon(m_controller.GetBrightness());
-
-    if (didFallback) {
-        ShowDdcFallbackBalloonOnce();
-    }
 
     if (m_popup) {
         m_popup->UpdateFromController();
@@ -227,18 +199,9 @@ void App::SetBrightnessMode(BrightnessMode mode) {
 }
 
 void App::SetEnabled(bool enabled) {
-    m_isEnabled = enabled;
-    m_settings.SaveEnabled(enabled);
+    m_state.enabled = enabled;
+    m_settings.Save(m_state);
     UpdateTrayIcon(m_controller.GetBrightness());
-}
-
-bool App::FallbackToSoftwareIfNeeded() {
-    if (m_brightnessMode == BrightnessMode::Hardware && !m_controller.IsHardwareAvailable()) {
-        m_brightnessMode = BrightnessMode::Software;
-        return true;
-    }
-
-    return false;
 }
 
 POINT App::GetTrayIconPosition() const {
@@ -296,7 +259,8 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
 
     case WM_USER_BRIGHTNESS_CHANGED: {
         const int newPercent = ClampBrightness(static_cast<int>(wParam));
-        m_settings.SaveBrightness(newPercent);
+        m_state.brightness = newPercent;
+        m_settings.Save(m_state);
         UpdateTrayIcon(newPercent);
         return 0;
     }
@@ -309,10 +273,7 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
 
     case WM_DISPLAYCHANGE:
         m_controller.RefreshMonitors();
-        if (FallbackToSoftwareIfNeeded()) {
-            ShowDdcFallbackBalloonOnce();
-        }
-        m_controller.SetBrightnessMode(m_brightnessMode);
+        m_controller.SetBrightnessMode(m_state.mode);
         UpdateTrayIcon(m_controller.GetBrightness());
         if (m_popup) {
             m_popup->UpdateFromController();

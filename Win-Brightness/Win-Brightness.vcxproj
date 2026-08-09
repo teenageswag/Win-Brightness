@@ -164,6 +164,7 @@
     <ClCompile Include="src\app\SettingsStore.cpp" />
     <ClCompile Include="src\brightness\BrightnessController.cpp" />
     <ClCompile Include="src\brightness\HardwareBrightness.cpp" />
+    <ClCompile Include="src\brightness\MonitorCatalog.cpp" />
     <ClCompile Include="src\brightness\SoftwareBrightness.cpp" />
     <ClCompile Include="src\platform\Win32Helpers.cpp" />
     <ClCompile Include="src\ui\DimOverlay.cpp" />
@@ -175,6 +176,7 @@
     <ClInclude Include="src\brightness\BrightnessController.h" />
     <ClInclude Include="src\brightness\BrightnessTypes.h" />
     <ClInclude Include="src\brightness\HardwareBrightness.h" />
+    <ClInclude Include="src\brightness\MonitorCatalog.h" />
     <ClInclude Include="src\brightness\SoftwareBrightness.h" />
     <ClInclude Include="src\main.h" />
     <ClInclude Include="src\platform\Win32Helpers.h" />

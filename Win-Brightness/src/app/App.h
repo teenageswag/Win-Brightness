@@ -21,11 +21,9 @@ private:
     void AddTrayIcon();
     void RemoveTrayIcon();
     void UpdateTrayIcon(int percent);
-    void ShowDdcFallbackBalloonOnce();
     void ShowContextMenu(POINT pt);
     void SetBrightnessMode(BrightnessMode mode);
     void SetEnabled(bool enabled);
-    bool FallbackToSoftwareIfNeeded();
     POINT GetTrayIconPosition() const;
 
     HINSTANCE m_hInstance;
@@ -33,11 +31,9 @@ private:
     HICON m_hAppIcon = nullptr;
     BrightnessController m_controller;
     SettingsStore m_settings;
+    AppSettings m_state;
     std::unique_ptr<PopupView> m_popup;
     UINT m_msgTaskbarCreated = 0;
-    BrightnessMode m_brightnessMode = BrightnessMode::Hardware;
-    bool m_isEnabled = true;
-    bool m_ddcFallbackBalloonShown = false;
     bool m_trayIconAdded = false;
     bool m_trayUsesVersion4 = false;
 };

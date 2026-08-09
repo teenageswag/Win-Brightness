@@ -1,53 +1,108 @@
 #include "SettingsStore.h"
 #include "../platform/Win32Helpers.h"
 #include <cwchar>
+#include <vector>
 
 namespace {
     constexpr const wchar_t* kSettingsKey = L"Software\\Win-Brightness\\Settings";
-    constexpr const wchar_t* kLegacySettingsKey = L"Software\\Win-Brightness";
-    constexpr const wchar_t* kModeValue = L"DimmingMode";
     constexpr const wchar_t* kBrightnessValue = L"Brightness";
+    constexpr const wchar_t* kModeValue = L"Mode";
     constexpr const wchar_t* kEnabledValue = L"Enabled";
+    constexpr const wchar_t* kAllMonitorsValue = L"AllMonitors";
+    constexpr const wchar_t* kMonitorIdsValue = L"MonitorIds";
     constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
     constexpr const wchar_t* kRunValue = L"Win-Brightness";
 } // namespace
 
-bool SettingsStore::TryReadDword(const wchar_t* subKey, const wchar_t* valueName, DWORD& value) const {
+bool SettingsStore::TryReadDword(const wchar_t* valueName, DWORD& value) const {
     DWORD type = 0;
     DWORD size = sizeof(value);
-    return RegGetValue(HKEY_CURRENT_USER, subKey, valueName, RRF_RT_REG_DWORD, &type, &value, &size) == ERROR_SUCCESS && type == REG_DWORD;
+    return RegGetValue(HKEY_CURRENT_USER, kSettingsKey, valueName, RRF_RT_REG_DWORD, &type, &value, &size) == ERROR_SUCCESS &&
+           type == REG_DWORD;
 }
 
-bool SettingsStore::WriteDword(const wchar_t* subKey, const wchar_t* valueName, DWORD value) const {
+bool SettingsStore::WriteDword(const wchar_t* valueName, DWORD value) const {
     RegistryKey key;
-    if (RegCreateKeyEx(HKEY_CURRENT_USER, subKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, key.Put(), nullptr) != ERROR_SUCCESS) {
+    if (RegCreateKeyEx(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, key.Put(), nullptr) != ERROR_SUCCESS) {
         return false;
     }
 
-    return RegSetValueEx(key.Get(), valueName, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value)) == ERROR_SUCCESS;
+    return RegSetValueEx(
+               key.Get(), valueName, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value)) == ERROR_SUCCESS;
 }
 
-BrightnessMode SettingsStore::LoadBrightnessMode() const {
-    DWORD value = static_cast<DWORD>(BrightnessMode::Hardware);
-    if (!TryReadDword(kSettingsKey, kModeValue, value)) {
-        TryReadDword(kLegacySettingsKey, kModeValue, value);
+std::vector<std::wstring> SettingsStore::ReadStringList(const wchar_t* valueName) const {
+    DWORD size = 0;
+    if (RegGetValue(HKEY_CURRENT_USER, kSettingsKey, valueName, RRF_RT_REG_MULTI_SZ, nullptr, nullptr, &size) != ERROR_SUCCESS ||
+        size < sizeof(wchar_t)) {
+        return {};
     }
 
-    return value == static_cast<DWORD>(BrightnessMode::Software) ? BrightnessMode::Software : BrightnessMode::Hardware;
+    std::vector<wchar_t> buffer(size / sizeof(wchar_t));
+    if (RegGetValue(HKEY_CURRENT_USER, kSettingsKey, valueName, RRF_RT_REG_MULTI_SZ, nullptr, buffer.data(), &size) != ERROR_SUCCESS) {
+        return {};
+    }
+
+    std::vector<std::wstring> values;
+    for (const wchar_t* current = buffer.data(); *current != L'\0'; current += std::wcslen(current) + 1) {
+        values.emplace_back(current);
+    }
+    return values;
 }
 
-void SettingsStore::SaveBrightnessMode(BrightnessMode mode) const {
-    WriteDword(kSettingsKey, kModeValue, static_cast<DWORD>(mode));
+bool SettingsStore::WriteStringList(const wchar_t* valueName, const std::vector<std::wstring>& values) const {
+    RegistryKey key;
+    if (RegCreateKeyEx(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, key.Put(), nullptr) != ERROR_SUCCESS) {
+        return false;
+    }
+
+    std::vector<wchar_t> buffer;
+    for (const std::wstring& value : values) {
+        buffer.insert(buffer.end(), value.begin(), value.end());
+        buffer.push_back(L'\0');
+    }
+    buffer.push_back(L'\0');
+    if (values.empty()) {
+        buffer.push_back(L'\0');
+    }
+
+    return RegSetValueEx(
+               key.Get(), valueName, 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(buffer.data()),
+               static_cast<DWORD>(buffer.size() * sizeof(wchar_t))) == ERROR_SUCCESS;
 }
 
-int SettingsStore::LoadBrightness(int fallbackPercent) const {
-    DWORD value = static_cast<DWORD>(ClampBrightness(fallbackPercent));
-    TryReadDword(kSettingsKey, kBrightnessValue, value);
-    return ClampBrightness(static_cast<int>(value));
+AppSettings SettingsStore::Load() const {
+    AppSettings settings;
+
+    DWORD value = 0;
+    if (TryReadDword(kBrightnessValue, value)) {
+        settings.brightness = ClampBrightness(static_cast<int>(value));
+    }
+
+    if (TryReadDword(kModeValue, value)) {
+        settings.mode = value == static_cast<DWORD>(BrightnessMode::Hardware)
+                            ? BrightnessMode::Hardware
+                            : BrightnessMode::Software;
+    }
+
+    if (TryReadDword(kEnabledValue, value)) {
+        settings.enabled = value != 0;
+    }
+
+    if (TryReadDword(kAllMonitorsValue, value)) {
+        settings.monitors.all = value != 0;
+    }
+    settings.monitors.ids = ReadStringList(kMonitorIdsValue);
+
+    return settings;
 }
 
-void SettingsStore::SaveBrightness(int percent) const {
-    WriteDword(kSettingsKey, kBrightnessValue, static_cast<DWORD>(ClampBrightness(percent)));
+void SettingsStore::Save(const AppSettings& settings) const {
+    WriteDword(kBrightnessValue, static_cast<DWORD>(ClampBrightness(settings.brightness)));
+    WriteDword(kModeValue, static_cast<DWORD>(settings.mode));
+    WriteDword(kEnabledValue, settings.enabled ? 1u : 0u);
+    WriteDword(kAllMonitorsValue, settings.monitors.all ? 1u : 0u);
+    WriteStringList(kMonitorIdsValue, settings.monitors.ids);
 }
 
 bool SettingsStore::IsAutostartEnabled() const {
@@ -81,27 +136,20 @@ void SettingsStore::SetAutostartEnabled(bool enabled) const {
         return;
     }
 
-    if (enabled) {
-        wchar_t exePath[MAX_PATH] = {};
-        const DWORD pathLength = GetModuleFileName(nullptr, exePath, MAX_PATH);
-        if (pathLength == 0 || pathLength >= MAX_PATH) {
-            return;
-        }
-
-        wchar_t command[MAX_PATH + 4] = {};
-        swprintf_s(command, L"\"%s\"", exePath);
-        RegSetValueEx(key.Get(), kRunValue, 0, REG_SZ, reinterpret_cast<const BYTE*>(command), static_cast<DWORD>((wcslen(command) + 1) * sizeof(wchar_t)));
-    } else {
+    if (!enabled) {
         RegDeleteValue(key.Get(), kRunValue);
+        return;
     }
-}
 
-bool SettingsStore::LoadEnabled() const {
-    DWORD value = 1;
-    TryReadDword(kSettingsKey, kEnabledValue, value);
-    return value != 0;
-}
+    wchar_t exePath[MAX_PATH] = {};
+    const DWORD pathLength = GetModuleFileName(nullptr, exePath, MAX_PATH);
+    if (pathLength == 0 || pathLength >= MAX_PATH) {
+        return;
+    }
 
-void SettingsStore::SaveEnabled(bool enabled) const {
-    WriteDword(kSettingsKey, kEnabledValue, enabled ? 1 : 0);
+    wchar_t command[MAX_PATH + 4] = {};
+    swprintf_s(command, L"\"%s\"", exePath);
+    RegSetValueEx(
+        key.Get(), kRunValue, 0, REG_SZ, reinterpret_cast<const BYTE*>(command),
+        static_cast<DWORD>((wcslen(command) + 1) * sizeof(wchar_t)));
 }
