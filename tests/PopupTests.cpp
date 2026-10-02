@@ -15,6 +15,14 @@ void Pump() {
     MSG message{};
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
 }
+ULONGLONG CpuTicks() {
+    FILETIME created{}, exited{}, kernel{}, user{};
+    Check(GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user) != FALSE, "read CPU time");
+    const auto ticks = [](FILETIME time) {
+        return (static_cast<ULONGLONG>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
+    };
+    return ticks(kernel) + ticks(user);
+}
 void Settle(PopupView& popup) {
     static int stage = 0;
     ++stage;
@@ -60,6 +68,14 @@ int main() try {
     Check(selectionChanges == 0, "showing does not change monitor selection");
     Settle(popup);
     Check(popup.FrameWaitHandle() == nullptr, "idle has no frame wakeups");
+    for (int sample = 0; sample < 3; ++sample) {
+        const ULONGLONG idleStart = CpuTicks();
+        Sleep(1000);
+        Pump();
+        Check(popup.FrameWaitHandle() == nullptr, "idle remains asleep without periodic frames");
+        std::printf("Idle CPU, sample %d over 1 second: %.3f ms\n", sample + 1,
+                    static_cast<double>(CpuTicks() - idleStart) / 10000.0);
+    }
     popup.SetExpanded(true);
     const auto fiveRows = popup.GetLayout();
     Check(fiveRows.MaximumScroll() == 2 * island::kRowStride, "five visible monitors and overflow scroll");
@@ -142,6 +158,9 @@ int main() try {
     Check(popup.IsVisible(), "closing animation can be interrupted");
     popup.Hide();
     Check(!popup.IsVisible() && popup.FrameWaitHandle() == nullptr, "hidden popup has no frames");
+    const bool shortcutWasFree = RegisterHotKey(popup.GetHWnd(), 500,
+        MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_RIGHT) != FALSE;
+    if (shortcutWasFree) UnregisterHotKey(popup.GetHWnd(), 500);
     const HWND keyboardForeground = GetForegroundWindow();
     popup.Toggle({0, 0}, true); Settle(popup);
     Check(GetForegroundWindow() == keyboardForeground, "hotkey opening also preserves foreground focus");
@@ -149,8 +168,19 @@ int main() try {
     popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
     Check(committed == 73, "temporary shortcut adjusts brightness without focus");
     popup.Hide();
-    Check(RegisterHotKey(popup.GetHWnd(), 500, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_RIGHT), "closing releases temporary shortcut");
-    UnregisterHotKey(popup.GetHWnd(), 500);
+    if (shortcutWasFree) {
+        Check(RegisterHotKey(popup.GetHWnd(), 500, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_RIGHT), "closing releases temporary shortcut");
+        UnregisterHotKey(popup.GetHWnd(), 500);
+    }
+    const DWORD gdiBefore = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+    const DWORD userBefore = GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS);
+    for (int i = 0; i < 6; ++i) {
+        PopupView temporary(GetModuleHandleW(nullptr), {});
+        Check(temporary.Register() && temporary.Create(), "recreate popup resources");
+    }
+    Pump();
+    Check(GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS) == gdiBefore, "popup recreation does not leak GDI objects");
+    Check(GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS) == userBefore, "popup recreation does not leak USER objects");
     std::puts("PopupTests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what()); return 1;
