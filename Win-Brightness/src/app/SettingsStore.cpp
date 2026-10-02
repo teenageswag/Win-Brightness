@@ -37,14 +37,9 @@ bool SettingsStore::TryReadDword(const wchar_t* valueName, DWORD& value) const {
            type == REG_DWORD;
 }
 
-SettingsResult SettingsStore::WriteDword(const wchar_t* valueName, DWORD value) const {
-    RegistryKey key;
-    const LSTATUS opened = RegCreateKeyExW(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0,
-                                          KEY_SET_VALUE, nullptr, key.Put(), nullptr);
-    if (opened != ERROR_SUCCESS) return std::unexpected(opened);
-
+SettingsResult SettingsStore::WriteDword(HKEY key, const wchar_t* valueName, DWORD value) const {
     return ResultFromStatus(RegSetValueExW(
-        key.Get(), valueName, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value)));
+        key, valueName, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value)));
 }
 
 std::vector<std::wstring> SettingsStore::ReadStringList(const wchar_t* valueName) const {
@@ -74,12 +69,7 @@ std::vector<std::wstring> SettingsStore::ReadStringList(const wchar_t* valueName
     return values;
 }
 
-SettingsResult SettingsStore::WriteStringList(const wchar_t* valueName, const std::vector<std::wstring>& values) const {
-    RegistryKey key;
-    const LSTATUS opened = RegCreateKeyExW(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0,
-                                          KEY_SET_VALUE, nullptr, key.Put(), nullptr);
-    if (opened != ERROR_SUCCESS) return std::unexpected(opened);
-
+SettingsResult SettingsStore::WriteStringList(HKEY key, const wchar_t* valueName, const std::vector<std::wstring>& values) const {
     std::vector<wchar_t> buffer;
     for (const std::wstring& value : values) {
         buffer.insert(buffer.end(), value.begin(), value.end());
@@ -92,7 +82,7 @@ SettingsResult SettingsStore::WriteStringList(const wchar_t* valueName, const st
 
     if (buffer.size() > MAXDWORD / sizeof(wchar_t)) return std::unexpected(ERROR_INVALID_DATA);
     return ResultFromStatus(RegSetValueExW(
-               key.Get(), valueName, 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(buffer.data()),
+               key, valueName, 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(buffer.data()),
                static_cast<DWORD>(buffer.size() * sizeof(wchar_t))));
 }
 
@@ -122,12 +112,31 @@ AppSettings SettingsStore::Load() const {
     return settings;
 }
 
-SettingsResult SettingsStore::Save(const AppSettings& settings) const try {
-    if (auto result = WriteDword(kBrightnessValue, static_cast<DWORD>(ClampBrightness(settings.brightness))); !result) return result;
-    if (auto result = WriteDword(kModeValue, static_cast<DWORD>(settings.mode)); !result) return result;
-    if (auto result = WriteDword(kEnabledValue, settings.enabled ? 1u : 0u); !result) return result;
-    if (auto result = WriteDword(kAllMonitorsValue, settings.monitors.all ? 1u : 0u); !result) return result;
-    return WriteStringList(kMonitorIdsValue, settings.monitors.ids);
+SettingsResult SettingsStore::Save(const AppSettings& settings, const AppSettings* previous) const try {
+    const bool brightness = !previous || settings.brightness != previous->brightness;
+    const bool mode = !previous || settings.mode != previous->mode;
+    const bool enabled = !previous || settings.enabled != previous->enabled;
+    const bool all = !previous || settings.monitors.all != previous->monitors.all;
+    const bool ids = !previous || settings.monitors.ids != previous->monitors.ids;
+    if (!brightness && !mode && !enabled && !all && !ids) return {};
+
+    RegistryKey key;
+    const LSTATUS opened = RegCreateKeyExW(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0,
+                                          KEY_SET_VALUE, nullptr, key.Put(), nullptr);
+    if (opened != ERROR_SUCCESS) return std::unexpected(opened);
+    if (brightness) {
+        if (auto result = WriteDword(key.Get(), kBrightnessValue, static_cast<DWORD>(ClampBrightness(settings.brightness))); !result) return result;
+    }
+    if (mode) {
+        if (auto result = WriteDword(key.Get(), kModeValue, static_cast<DWORD>(settings.mode)); !result) return result;
+    }
+    if (enabled) {
+        if (auto result = WriteDword(key.Get(), kEnabledValue, settings.enabled ? 1u : 0u); !result) return result;
+    }
+    if (all) {
+        if (auto result = WriteDword(key.Get(), kAllMonitorsValue, settings.monitors.all ? 1u : 0u); !result) return result;
+    }
+    return ids ? WriteStringList(key.Get(), kMonitorIdsValue, settings.monitors.ids) : SettingsResult{};
 } catch (const std::bad_alloc&) {
     return std::unexpected(ERROR_NOT_ENOUGH_MEMORY);
 }

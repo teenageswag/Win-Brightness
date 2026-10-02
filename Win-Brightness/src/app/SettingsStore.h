@@ -16,14 +16,14 @@ struct AppSettings {
 class SettingsStore {
 public:
     AppSettings Load() const;
-    SettingsResult Save(const AppSettings& settings) const;
+    SettingsResult Save(const AppSettings& settings, const AppSettings* previous = nullptr) const;
 
     bool IsAutostartEnabled() const;
     SettingsResult SetAutostartEnabled(bool enabled) const;
 
 private:
     bool TryReadDword(const wchar_t* valueName, DWORD& value) const;
-    SettingsResult WriteDword(const wchar_t* valueName, DWORD value) const;
+    SettingsResult WriteDword(HKEY key, const wchar_t* valueName, DWORD value) const;
     std::vector<std::wstring> ReadStringList(const wchar_t* valueName) const;
-    SettingsResult WriteStringList(const wchar_t* valueName, const std::vector<std::wstring>& values) const;
+    SettingsResult WriteStringList(HKEY key, const wchar_t* valueName, const std::vector<std::wstring>& values) const;
 };

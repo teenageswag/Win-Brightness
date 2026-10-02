@@ -114,7 +114,18 @@ int main() try {
         DenySettingsWrites denied;
         const auto result = store.Save(settings);
         Check(!result && result.error() == ERROR_ACCESS_DENIED, "propagate registry access denial");
+        Check(store.Save(settings, &settings).has_value(), "no-op save does not open a key for writing");
     }
+    const DWORD sentinelMode = 42;
+    registry.Write(settingsPath, L"Mode", REG_DWORD, &sentinelMode, sizeof(sentinelMode));
+    auto updated = settings;
+    updated.brightness = 38;
+    Check(store.Save(updated, &settings).has_value(), "save brightness delta");
+    DWORD observedMode = 0;
+    DWORD modeBytes = sizeof(observedMode);
+    Check(RegGetValueW(HKEY_CURRENT_USER, settingsPath, L"Mode", RRF_RT_REG_DWORD,
+          nullptr, &observedMode, &modeBytes) == ERROR_SUCCESS && observedMode == sentinelMode,
+          "brightness save does not rewrite unrelated values");
     Check(store.SetAutostartEnabled(true).has_value() && store.IsAutostartEnabled(),
           "enable and detect quoted startup command");
     Check(store.SetAutostartEnabled(false).has_value() && !store.IsAutostartEnabled(),

@@ -67,6 +67,7 @@ bool App::Init() {
     }
 
     m_state = m_settings.Load();
+    m_savedState = m_state;
     m_autostartEnabled = m_settings.IsAutostartEnabled();
 
     m_controller.SetBrightnessMode(m_state.mode);
@@ -264,7 +265,9 @@ void App::ApplySoftwareBrightness() {
 }
 
 void App::SaveSettings() {
-    ReportPersistenceResult(m_settings.Save(m_state), false);
+    const auto result = m_settings.Save(m_state, &m_savedState);
+    if (result) m_savedState = m_state;
+    ReportPersistenceResult(result, false);
 }
 
 void App::ReportPersistenceResult(const SettingsResult& result, bool autostart) {

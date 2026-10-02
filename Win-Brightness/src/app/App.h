@@ -45,6 +45,7 @@ private:
     SoftwareBrightness m_software;
     SettingsStore m_settings;
     AppSettings m_state;
+    AppSettings m_savedState;
     std::unique_ptr<PopupView> m_popup;
     UINT m_msgTaskbarCreated = 0;
     bool m_autostartEnabled = false;
