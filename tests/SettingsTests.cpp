@@ -1,5 +1,6 @@
 #include "app/SettingsStore.h"
 #include "platform/Win32Helpers.h"
+#include "ui/island/Preferences.h"
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -77,6 +78,19 @@ int main() try {
     TestRegistry registry;
     SettingsStore store;
     constexpr auto settingsPath = L"Software\\trenches\\Settings";
+    const auto defaults = island::LoadPreferences();
+    Check(defaults.theme == island::Theme::System && !defaults.translucent && defaults.animations, "interface defaults");
+    Check(island::SavePreferences({island::Theme::Light, true, false}) == ERROR_SUCCESS, "save interface preferences");
+    const auto appearance = island::LoadPreferences();
+    Check(appearance.theme == island::Theme::Light && appearance.translucent && !appearance.animations,
+          "interface preferences round trip");
+    constexpr auto interfacePath = L"Software\\trenches\\Interface";
+    const DWORD invalidInterfaceValue = 99;
+    for (const auto name : {L"Theme", L"Translucent", L"Animations"})
+        registry.Write(interfacePath, name, REG_DWORD, &invalidInterfaceValue, sizeof(invalidInterfaceValue));
+    const auto recoveredAppearance = island::LoadPreferences();
+    Check(recoveredAppearance.theme == island::Theme::System && !recoveredAppearance.translucent && recoveredAppearance.animations,
+          "invalid interface preferences use defaults");
 
     const wchar_t ids[] = L"first\0second\0";
     registry.Write(settingsPath, L"MonitorIds", REG_MULTI_SZ, ids, sizeof(ids));

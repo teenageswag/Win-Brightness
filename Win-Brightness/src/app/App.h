@@ -23,6 +23,8 @@ private:
     void RemoveTrayIcon();
     void UpdateTrayIcon();
     void ShowContextMenu(POINT pt);
+    void SetInterfacePreferences(island::Preferences preferences);
+    void ReportInterfaceError(const wchar_t* message, HRESULT error);
     void TogglePopup(POINT monitorPoint, bool keyboardInvoked);
     void SyncPopup();
     void ApplySoftwareBrightness();
@@ -47,6 +49,7 @@ private:
     AppSettings m_state;
     AppSettings m_savedState;
     std::unique_ptr<PopupView> m_popup;
+    island::Preferences m_interfacePreferences;
     UINT m_msgTaskbarCreated = 0;
     bool m_autostartEnabled = false;
     bool m_hotkeyRegistered = false;

@@ -173,6 +173,7 @@
     <ClCompile Include="src\ui\island\Fonts.cpp" />
     <ClCompile Include="src\ui\island\Renderer.cpp" />
     <ClCompile Include="src\ui\island\FrameClock.cpp" />
+    <ClCompile Include="src\ui\island\Preferences.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\app\App.h" />
@@ -193,6 +194,7 @@
     <ClInclude Include="src\ui\island\Spring.h" />
     <ClInclude Include="src\ui\island\Renderer.h" />
     <ClInclude Include="src\ui\island\FrameClock.h" />
+    <ClInclude Include="src\ui\island\Preferences.h" />
     <ClInclude Include="src\ui\PopupModel.h" />
   </ItemGroup>
   <ItemGroup>

@@ -2,6 +2,7 @@
 #include "Fonts.h"
 #include <d2d1_1.h>
 #include <d2d1effects.h>
+#include <dwrite_1.h>
 #include <d3d11.h>
 #include <dcomp.h>
 #include <dxgi1_3.h>
@@ -73,7 +74,7 @@ struct Renderer::Impl {
     HINSTANCE module = nullptr;
     UINT dpi = 96, width = 0, height = 0;
     float canvasWidth = 0.0f;
-    bool systemLight = false, highContrast = false;
+    bool systemLight = false, highContrast = false, systemTransparency = true;
     HANDLE latency = nullptr;
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> immediate;
@@ -166,6 +167,11 @@ struct Renderer::Impl {
                 Fail(typography->AddFontFeature({DWRITE_FONT_FEATURE_TAG_TABULAR_FIGURES, 1}));
                 Fail(text.layout->SetTypography(typography.Get(), {0, static_cast<UINT32>(value.size())}));
             }
+            if (size == 12.0f) {
+                ComPtr<IDWriteTextLayout1> spacing;
+                if (SUCCEEDED(text.layout.As(&spacing)))
+                    Fail(spacing->SetCharacterSpacing(0.1f, 0.0f, 0.0f, {0, static_cast<UINT32>(value.size())}));
+            }
             text.value = value; text.width = rect.Width(); text.height = rect.Height();
             text.size = size; text.weight = weight; text.centered = centered;
         }
@@ -193,7 +199,7 @@ struct Renderer::Impl {
         const bool selected = row.index < state.monitors.size() && state.selection.Contains(state.monitors[row.index].id);
         const float alpha = state.enabled && selected ? 1.0f : 0.45f;
         auto track = palette.track; track.a *= alpha;
-        ShapeFill(row.slider, row.slider.Height() * 0.5f, track);
+        ShapeFill(row.slider, row.slider.Height() * 0.5f, track, Scale({Control::Slider, row.index}, frame));
         Rect fill = row.slider;
         fill.right = fill.left + std::clamp(frame.sliderValue / 100.0f, 0.0f, 1.0f) * fill.Width();
         auto accent = palette.fill; accent.a *= alpha;
@@ -280,7 +286,12 @@ struct Renderer::Impl {
             Rect modes{layout.software.left, layout.software.top, layout.hardware.right, layout.hardware.bottom};
             ShapeFill(modes, modes.Height() * 0.5f, palette.surface);
             Rect active = layout.software.Offset(frame.modePosition * layout.software.Width(), 0);
-            ShapeFill(active, active.Height() * 0.5f, palette.selected);
+            const Target selectedMode{state.mode == BrightnessMode::Software ? Control::Software : Control::Hardware};
+            ShapeFill(active, active.Height() * 0.5f, palette.selected, Scale(selectedMode, frame));
+            if (frame.hot.control == Control::Software && state.mode == BrightnessMode::Hardware)
+                ShapeFill(layout.software, 17, Mix(palette.surface, palette.text, 0.08f), frame.hotScale);
+            if (frame.hot.control == Control::Hardware && state.mode == BrightnessMode::Software)
+                ShapeFill(layout.hardware, 17, Mix(palette.surface, palette.text, 0.08f), frame.hotScale);
             Label(L"Software", layout.software, 13, DWRITE_FONT_WEIGHT_MEDIUM,
                   Mix(palette.selectedText, palette.text, frame.modePosition), true);
             Label(L"Hardware", layout.hardware, 13, DWRITE_FONT_WEIGHT_MEDIUM,
@@ -323,6 +334,10 @@ void Renderer::RefreshTheme() {
     m_impl->systemLight = RegGetValueW(HKEY_CURRENT_USER,
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"AppsUseLightTheme",
         RRF_RT_REG_DWORD, nullptr, &light, &size) == ERROR_SUCCESS && light != 0;
+    DWORD transparency = 1; size = sizeof(transparency);
+    m_impl->systemTransparency = RegGetValueW(HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"EnableTransparency",
+        RRF_RT_REG_DWORD, nullptr, &transparency, &size) != ERROR_SUCCESS || transparency != 0;
     HIGHCONTRASTW contrast{sizeof(contrast)};
     m_impl->highContrast = SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
         (contrast.dwFlags & HCF_HIGHCONTRASTON) != 0;
@@ -418,7 +433,8 @@ HRESULT Renderer::Draw(const Frame& frame, const wchar_t* snapshotPath) {
     r.shapeCursor = 0; r.textCursor = 0; r.drawingError = S_OK;
     const Rect body = frame.compact.shell;
     const auto palette = MakePalette(frame.preferences.theme == Theme::Light ||
-        (frame.preferences.theme == Theme::System && r.systemLight), r.highContrast, frame.preferences.translucent);
+        (frame.preferences.theme == Theme::System && r.systemLight), r.highContrast,
+        frame.preferences.translucent && r.systemTransparency);
     const float left = (r.canvasWidth - body.Width()) * 0.5f;
     auto* bodyGeometry = r.Geometry(body.Width(), body.Height(), frame.radius);
     if (!bodyGeometry) return r.drawingError;

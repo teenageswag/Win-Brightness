@@ -1,11 +1,21 @@
 #include "App.h"
 #include "../resources/resources.h"
+#include "../ui/island/Preferences.h"
 #include <algorithm>
 #include <cwchar>
+#include <utility>
 
 namespace {
     constexpr UINT kTrayIconId = 1;
     constexpr int kToggleHotkeyId = 1;
+    struct MenuOwner {
+        HMENU value = CreatePopupMenu();
+        ~MenuOwner() { if (value) DestroyMenu(value); }
+        MenuOwner() = default;
+        MenuOwner(const MenuOwner&) = delete;
+        MenuOwner& operator=(const MenuOwner&) = delete;
+        HMENU Release() { return std::exchange(value, nullptr); }
+    };
 
     LRESULT CALLBACK StaticAppWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
         App* app = nullptr;
@@ -87,13 +97,23 @@ bool App::Init() {
     actions.setMode = [this](BrightnessMode mode) { SetBrightnessMode(mode); };
     actions.setSelection = [this](MonitorSelection selection) { SetMonitorSelection(std::move(selection)); };
     actions.setAutostart = [this](bool enabled) { SetAutostartEnabled(enabled); };
+    actions.reportUiError = [this](HRESULT error) {
+        ReportInterfaceError(L"The brightness interface could not render. Display control remains available from the tray.", error);
+    };
+    actions.showContextMenu = [this](POINT point) { ShowContextMenu(point); };
 
     m_popup = std::make_unique<PopupView>(m_hInstance, std::move(actions));
     if (!m_popup->Register() || !m_popup->Create()) {
+        const HRESULT error = m_popup->LastRenderError();
+        wchar_t message[180]{};
+        swprintf_s(message, L"Unable to create the brightness interface. Graphics error 0x%08lX.", static_cast<unsigned long>(error));
+        MessageBoxW(nullptr, message, L"trenches", MB_OK | MB_ICONERROR);
         m_popup.reset();
         return false;
     }
     SetWindowLongPtr(m_popup->GetHWnd(), GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(m_hMsgWnd));
+    m_interfacePreferences = island::LoadPreferences();
+    m_popup->SetPreferences(m_interfacePreferences);
 
     m_hotkeyRegistered = RegisterHotKey(
         m_hMsgWnd, kToggleHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, static_cast<UINT>('B')) != FALSE;
@@ -206,23 +226,49 @@ void App::UpdateTrayIcon() {
 }
 
 void App::ShowContextMenu(POINT point) {
-    HMENU menu = CreatePopupMenu();
-    if (!menu) {
+    MenuOwner menu;
+    MenuOwner themes;
+    if (!menu.value || !themes.value) {
         return;
     }
 
-    AppendMenu(menu, MF_STRING, ID_MENU_SHOW, L"Open brightness");
-    AppendMenu(menu, MF_STRING, ID_MENU_TOGGLE_ENABLED, m_state.enabled ? L"Pause dimming" : L"Resume dimming");
-    AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenu(menu, MF_STRING | (m_autostartEnabled ? MF_CHECKED : MF_UNCHECKED), ID_MENU_AUTOSTART, L"Start with Windows");
-    AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenu(menu, MF_STRING, ID_MENU_EXIT, L"Exit");
-    SetMenuDefaultItem(menu, ID_MENU_SHOW, FALSE);
+    AppendMenuW(menu.value, MF_STRING, ID_MENU_SHOW, L"Open brightness");
+    AppendMenuW(menu.value, MF_STRING, ID_MENU_TOGGLE_ENABLED, m_state.enabled ? L"Pause dimming" : L"Resume dimming");
+    AppendMenuW(menu.value, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(themes.value, MF_STRING, ID_MENU_THEME_SYSTEM, L"System");
+    AppendMenuW(themes.value, MF_STRING, ID_MENU_THEME_DARK, L"Dark");
+    AppendMenuW(themes.value, MF_STRING, ID_MENU_THEME_LIGHT, L"Light");
+    CheckMenuRadioItem(themes.value, ID_MENU_THEME_SYSTEM, ID_MENU_THEME_LIGHT,
+        ID_MENU_THEME_SYSTEM + static_cast<UINT>(m_interfacePreferences.theme), MF_BYCOMMAND);
+    if (!AppendMenuW(menu.value, MF_POPUP, reinterpret_cast<UINT_PTR>(themes.value), L"Appearance")) return;
+    themes.Release();
+    AppendMenuW(menu.value, MF_STRING | (m_interfacePreferences.translucent ? MF_CHECKED : MF_UNCHECKED), ID_MENU_TRANSLUCENT, L"Translucent surface");
+    AppendMenuW(menu.value, MF_STRING | (m_interfacePreferences.animations ? MF_CHECKED : MF_UNCHECKED), ID_MENU_ANIMATIONS, L"Animations");
+    AppendMenuW(menu.value, MF_STRING | (m_autostartEnabled ? MF_CHECKED : MF_UNCHECKED), ID_MENU_AUTOSTART, L"Start with Windows");
+    AppendMenuW(menu.value, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu.value, MF_STRING, ID_MENU_EXIT, L"Exit");
+    SetMenuDefaultItem(menu.value, ID_MENU_SHOW, FALSE);
 
     SetForegroundWindow(m_hMsgWnd);
-    TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON, point.x, point.y, 0, m_hMsgWnd, nullptr);
+    TrackPopupMenu(menu.value, TPM_LEFTALIGN | TPM_RIGHTBUTTON, point.x, point.y, 0, m_hMsgWnd, nullptr);
     PostMessage(m_hMsgWnd, WM_NULL, 0, 0);
-    DestroyMenu(menu);
+}
+
+void App::SetInterfacePreferences(island::Preferences preferences) {
+    m_interfacePreferences = preferences;
+    if (m_popup) m_popup->SetPreferences(preferences);
+    const LSTATUS result = island::SavePreferences(preferences);
+    if (result != ERROR_SUCCESS)
+        ReportInterfaceError(L"Unable to save the interface preferences.", HRESULT_FROM_WIN32(result));
+}
+
+void App::ReportInterfaceError(const wchar_t* message, HRESULT error) {
+    if (!m_trayIconAdded) return;
+    NOTIFYICONDATAW icon{sizeof(icon)};
+    icon.hWnd = m_hMsgWnd; icon.uID = kTrayIconId; icon.uFlags = NIF_INFO; icon.dwInfoFlags = NIIF_ERROR;
+    swprintf_s(icon.szInfoTitle, L"trenches");
+    swprintf_s(icon.szInfo, L"%s Error 0x%08lX.", message, static_cast<unsigned long>(error));
+    Shell_NotifyIconW(NIM_MODIFY, &icon);
 }
 
 void App::TogglePopup(POINT monitorPoint, bool keyboardInvoked) {
@@ -458,6 +504,26 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
         case ID_MENU_AUTOSTART:
             SetAutostartEnabled(!m_autostartEnabled);
             break;
+        case ID_MENU_THEME_SYSTEM:
+        case ID_MENU_THEME_DARK:
+        case ID_MENU_THEME_LIGHT: {
+            auto preferences = m_interfacePreferences;
+            preferences.theme = static_cast<island::Theme>(LOWORD(wParam) - ID_MENU_THEME_SYSTEM);
+            SetInterfacePreferences(preferences);
+            break;
+        }
+        case ID_MENU_TRANSLUCENT: {
+            auto preferences = m_interfacePreferences;
+            preferences.translucent = !preferences.translucent;
+            SetInterfacePreferences(preferences);
+            break;
+        }
+        case ID_MENU_ANIMATIONS: {
+            auto preferences = m_interfacePreferences;
+            preferences.animations = !preferences.animations;
+            SetInterfacePreferences(preferences);
+            break;
+        }
         case ID_MENU_EXIT:
             if (m_popup) m_popup->Hide();
             PostQuitMessage(0);

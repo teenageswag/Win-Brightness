@@ -27,6 +27,7 @@ target_link_libraries(RendererTests PRIVATE user32 gdi32)
 add_test(NAME RendererTests COMMAND RendererTests)
 add_executable(SettingsTests SettingsTests.cpp
     ../Win-Brightness/src/app/SettingsStore.cpp
+    ../Win-Brightness/src/ui/island/Preferences.cpp
     ../Win-Brightness/src/platform/Win32Helpers.cpp)
 target_compile_features(SettingsTests PRIVATE cxx_std_23)
 target_compile_options(SettingsTests PRIVATE /W4 /WX /permissive-)
