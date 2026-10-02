@@ -14,6 +14,14 @@ enum class BrightnessMode {
     Hardware = 1
 };
 
+enum class HardwareStatus { Unknown, Available, Unsupported, Failed };
+
+inline bool IsUnsupportedHardwareError(DWORD error) {
+    return error == ERROR_NOT_SUPPORTED ||
+           error == static_cast<DWORD>(ERROR_GRAPHICS_DDCCI_VCP_NOT_SUPPORTED) ||
+           error == static_cast<DWORD>(ERROR_GRAPHICS_I2C_NOT_SUPPORTED);
+}
+
 inline constexpr int kMinBrightness = 1;
 inline constexpr int kMaxBrightness = 100;
 inline constexpr int kDefaultBrightness = 72;
@@ -31,6 +39,7 @@ struct MonitorInfo {
     bool primary = false;
     bool hardwareBrightness = false;
     DWORD hardwareError = ERROR_SUCCESS;
+    HardwareStatus hardwareStatus = HardwareStatus::Unknown;
 };
 
 struct MonitorSelection {

@@ -11,6 +11,7 @@
 namespace fake {
 inline std::atomic<unsigned> writeFailureMask{0};
 inline std::atomic<unsigned> probeFailureMask{0};
+inline std::atomic<DWORD> probeError{ERROR_GEN_FAILURE};
 inline std::atomic<int> queryDelayMs{0};
 inline std::atomic<int> writeDelayMs{0};
 inline std::atomic<unsigned> destroyed{0};
@@ -41,7 +42,7 @@ BOOL WINAPI GetVCPFeatureAndVCPFeatureReply(HANDLE handle, BYTE, LPMC_VCP_CODE_T
     fake::probeThread = GetCurrentThreadId();
     std::this_thread::sleep_for(std::chrono::milliseconds(fake::queryDelayMs.load()));
     if (fake::Fails(fake::probeFailureMask.load(), handle)) {
-        SetLastError(ERROR_GEN_FAILURE);
+        SetLastError(fake::probeError.load());
         return FALSE;
     }
     if (type) *type = MC_SET_PARAMETER;

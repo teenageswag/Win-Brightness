@@ -14,6 +14,7 @@ struct PopupState {
     std::vector<MonitorInfo> monitors;
     bool autostart = false;
     bool hotkeyAvailable = true;
+    DWORD catalogError = ERROR_SUCCESS;
 };
 
 struct PopupActions {

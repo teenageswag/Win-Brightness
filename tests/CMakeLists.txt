@@ -20,3 +20,12 @@ target_compile_options(HardwareTests PRIVATE /W4 /WX /permissive-)
 target_compile_definitions(HardwareTests PRIVATE UNICODE _UNICODE)
 target_include_directories(HardwareTests PRIVATE ../Win-Brightness/src)
 add_test(NAME HardwareTests COMMAND HardwareTests)
+add_executable(ControllerTests ControllerTests.cpp
+    ../Win-Brightness/src/brightness/BrightnessController.cpp
+    ../Win-Brightness/src/brightness/HardwareBrightness.cpp)
+target_compile_features(ControllerTests PRIVATE cxx_std_23)
+target_compile_options(ControllerTests PRIVATE /W4 /WX /permissive-)
+target_compile_definitions(ControllerTests PRIVATE UNICODE _UNICODE)
+target_include_directories(ControllerTests PRIVATE ../Win-Brightness/src)
+target_link_libraries(ControllerTests PRIVATE user32)
+add_test(NAME ControllerTests COMMAND ControllerTests)

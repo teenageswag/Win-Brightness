@@ -514,7 +514,8 @@ void PopupView::UpdateAccessibleName() {
             const MonitorInfo& monitor = m_state.monitors[m_focus.monitorIndex];
             name = L"Display " + std::to_wstring(m_focus.monitorIndex + 1) + L", " + monitor.name;
             name += m_state.selection.Contains(monitor.id) ? L", included." : L", not included.";
-            name += monitor.hardwareBrightness ? L" DDC CI available." : L" DDC CI unavailable.";
+            name += monitor.hardwareStatus == HardwareStatus::Failed ? L" DDC CI failed."
+                : (monitor.hardwareBrightness ? L" DDC CI available." : L" DDC CI unavailable.");
         }
         break;
     case FocusKind::Autostart:
@@ -728,6 +729,9 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
             }
             std::wstring displaySummary = L"Displays  ·  " + std::to_wstring(selectedCount) + L" / " +
                                           std::to_wstring(m_state.monitors.size());
+            if (m_state.catalogError != ERROR_SUCCESS) {
+                displaySummary += L"  ·  Detection failed (" + std::to_wstring(m_state.catalogError) + L")";
+            }
             if (m_state.mode == BrightnessMode::Hardware && selectedCount > 0 && hardwareCount < selectedCount) {
                 displaySummary += L"  ·  DDC " + std::to_wstring(hardwareCount) + L" / " + std::to_wstring(selectedCount);
             }
@@ -771,9 +775,13 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
                 const int monitorHeight = monitor.bounds.bottom - monitor.bounds.top;
                 std::wstring monitorDetail = std::to_wstring(monitorWidth) + L"x" + std::to_wstring(monitorHeight);
                 if (monitor.primary) monitorDetail += L"  ·  Primary";
-                monitorDetail += monitor.hardwareBrightness ? L"  ·  DDC/CI" : L"  ·  No DDC/CI";
-                if (monitor.hardwareError != ERROR_SUCCESS) {
-                    monitorDetail += L"  ·  Error " + std::to_wstring(monitor.hardwareError);
+                switch (monitor.hardwareStatus) {
+                case HardwareStatus::Unknown: monitorDetail += L"  ·  Checking DDC/CI"; break;
+                case HardwareStatus::Available: monitorDetail += L"  ·  DDC/CI"; break;
+                case HardwareStatus::Unsupported: monitorDetail += L"  ·  No DDC/CI"; break;
+                case HardwareStatus::Failed:
+                    monitorDetail += L"  ·  DDC/CI failed (" + std::to_wstring(monitor.hardwareError) + L")";
+                    break;
                 }
                 DrawText(graphics, monitorDetail, detail,
                          {item.left + ScaleByDpi(52, dpi), item.top + ScaleByDpi(21, dpi), item.right - ScaleByDpi(46, dpi), item.bottom - ScaleByDpi(2, dpi)},

@@ -19,6 +19,8 @@ bool BrightnessController::Init(HWND notificationWindow) {
         m_stopWorker = false;
         m_refreshPending = true;
         m_notificationWindow = notificationWindow;
+        m_retryCount = 0;
+        m_retryAt.reset();
     }
 
     try {
@@ -122,18 +124,37 @@ void BrightnessController::RequestMonitorRefresh() {
     {
         std::lock_guard lock(m_stateMutex);
         m_refreshPending = true;
+        m_retryCount = 0;
+        m_retryAt.reset();
     }
     m_workerCv.notify_one();
 }
 
 void BrightnessController::RefreshMonitors() {
-    std::vector<MonitorInfo> monitors = MonitorCatalog::Enumerate();
+    auto enumerated = MonitorCatalog::Enumerate();
+    if (!enumerated) {
+        {
+            std::lock_guard lock(m_stateMutex);
+            m_catalogError = enumerated.error();
+            ScheduleRetryLocked();
+        }
+        PostMessageW(m_notificationWindow, kMonitorsChangedMessage, 0, 0);
+        return;
+    }
+    auto monitors = std::move(*enumerated);
     m_hardware.RefreshMonitors(monitors);
 
     {
         std::lock_guard lock(m_stateMutex);
         m_monitors = std::move(monitors);
-        QueueApplyLocked();
+        m_catalogError = ERROR_SUCCESS;
+        if (std::ranges::any_of(m_monitors, [](const auto& monitor) {
+                return monitor.hardwareStatus == HardwareStatus::Failed &&
+                       !IsUnsupportedHardwareError(monitor.hardwareError);
+            })) {
+            ScheduleRetryLocked();
+        }
+        QueueApplyLocked(false);
     }
     m_workerCv.notify_one();
     PostMessageW(m_notificationWindow, kMonitorsChangedMessage, 0, 0);
@@ -151,8 +172,26 @@ bool BrightnessController::IsHardwareAvailableForSelection() const {
     });
 }
 
-void BrightnessController::QueueApplyLocked() {
+DWORD BrightnessController::GetCatalogError() const {
+    std::lock_guard lock(m_stateMutex);
+    return m_catalogError;
+}
+
+void BrightnessController::ScheduleRetryLocked() {
+    constexpr std::chrono::milliseconds delays[] = {
+        std::chrono::milliseconds(250), std::chrono::milliseconds(1000), std::chrono::milliseconds(2000)
+    };
+    if (!m_stopWorker && !m_retryAt && m_retryCount < std::size(delays)) {
+        m_retryAt = std::chrono::steady_clock::now() + delays[m_retryCount++];
+    }
+}
+
+void BrightnessController::QueueApplyLocked(bool resetRetry) {
     m_applyPending = true;
+    if (resetRetry) {
+        m_retryCount = 0;
+        m_retryAt.reset();
+    }
 }
 
 void BrightnessController::WorkerThreadProc() {
@@ -160,9 +199,18 @@ void BrightnessController::WorkerThreadProc() {
         ApplyState state;
         {
             std::unique_lock lock(m_stateMutex);
-            m_workerCv.wait(lock, [this] {
+            const auto pending = [this] {
                 return m_stopWorker || m_refreshPending || m_applyPending;
-            });
+            };
+            if (m_retryAt) {
+                const auto deadline = *m_retryAt;
+                if (!m_workerCv.wait_until(lock, deadline, pending)) {
+                    m_retryAt.reset();
+                    m_refreshPending = true;
+                }
+            } else {
+                m_workerCv.wait(lock, pending);
+            }
             if (m_stopWorker) {
                 break;
             }
@@ -175,6 +223,7 @@ void BrightnessController::WorkerThreadProc() {
             }
 
             m_applyPending = false;
+            if (m_catalogError != ERROR_SUCCESS) continue;
             state.brightness = m_currentBrightness.load(std::memory_order_relaxed);
             state.enabled = m_enabled;
             state.mode = m_mode;
@@ -238,9 +287,16 @@ void BrightnessController::PublishWriteResults(const std::vector<HardwareWriteRe
                 found = true;
                 if (result.error != ERROR_SUCCESS && error == ERROR_SUCCESS) error = result.error;
             }
-            if (found && error != monitor.hardwareError) {
+            const HardwareStatus status = error == ERROR_SUCCESS ? HardwareStatus::Available
+                : (!monitor.hardwareBrightness && IsUnsupportedHardwareError(error)
+                    ? HardwareStatus::Unsupported : HardwareStatus::Failed);
+            if (found && (error != monitor.hardwareError || status != monitor.hardwareStatus)) {
                 monitor.hardwareError = error;
+                monitor.hardwareStatus = status;
                 changed = true;
+            }
+            if (found && error != ERROR_SUCCESS && !IsUnsupportedHardwareError(error)) {
+                ScheduleRetryLocked();
             }
         }
     }

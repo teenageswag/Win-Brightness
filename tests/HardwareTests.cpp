@@ -32,8 +32,19 @@ int main() try {
     hardware.RefreshMonitors(monitors);
     Check(monitors[0].hardwareError == ERROR_GEN_FAILURE,
           "capture discovery error before releasing handle");
+    Check(monitors[0].hardwareStatus == HardwareStatus::Failed,
+          "distinguish discovery failure from unsupported brightness");
+    results = hardware.ApplyBrightness(35, {L"display"});
+    Check(results.size() == 2 && results[1].physicalIndex == 1 && results[1].error == ERROR_GEN_FAILURE,
+          "preserve rejected physical endpoint and error during writes");
     hardware.ReleaseMonitors();
     Check(fake::destroyed == 4, "release supported and rejected physical monitors exactly once");
+
+    fake::probeFailureMask = 3;
+    fake::probeError = ERROR_NOT_SUPPORTED;
+    hardware.RefreshMonitors(monitors);
+    Check(monitors[0].hardwareStatus == HardwareStatus::Unsupported && !monitors[0].hardwareBrightness,
+          "recognize explicitly unsupported brightness");
     std::puts("HardwareTests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());

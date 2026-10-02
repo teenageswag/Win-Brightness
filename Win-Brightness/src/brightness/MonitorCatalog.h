@@ -2,8 +2,9 @@
 
 #include "BrightnessTypes.h"
 #include <vector>
+#include <expected>
 
 class MonitorCatalog {
 public:
-    static std::vector<MonitorInfo> Enumerate();
+    static std::expected<std::vector<MonitorInfo>, DWORD> Enumerate();
 };

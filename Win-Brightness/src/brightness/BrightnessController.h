@@ -4,7 +4,9 @@
 #include "HardwareBrightness.h"
 #include <atomic>
 #include <condition_variable>
+#include <chrono>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -34,6 +36,7 @@ public:
     void RequestMonitorRefresh();
     std::vector<MonitorInfo> GetMonitors() const;
     bool IsHardwareAvailableForSelection() const;
+    DWORD GetCatalogError() const;
 
 private:
     struct ApplyState {
@@ -44,11 +47,12 @@ private:
         std::vector<MonitorInfo> monitors;
     };
 
-    void QueueApplyLocked();
+    void QueueApplyLocked(bool resetRetry = true);
     void RefreshMonitors();
     void WorkerThreadProc();
     void ApplyBrightness(const ApplyState& state);
     void PublishWriteResults(const std::vector<HardwareWriteResult>& results);
+    void ScheduleRetryLocked();
     static std::vector<MonitorInfo> ResolveTargets(const ApplyState& state);
     static std::vector<std::wstring> MonitorIds(const std::vector<MonitorInfo>& monitors);
 
@@ -62,6 +66,9 @@ private:
     bool m_applyPending = false;
     bool m_refreshPending = false;
     HWND m_notificationWindow = nullptr;
+    std::optional<std::chrono::steady_clock::time_point> m_retryAt;
+    size_t m_retryCount = 0;
+    DWORD m_catalogError = ERROR_SUCCESS;
     bool m_enabled = true;
     BrightnessMode m_mode = BrightnessMode::Software;
     MonitorSelection m_selection;

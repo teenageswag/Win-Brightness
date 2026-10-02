@@ -34,6 +34,7 @@ private:
     struct CachedPhysicalMonitor {
         PHYSICAL_MONITOR monitor{};
         DWORD maxBrightness = 100;
+        DWORD discoveryError = ERROR_SUCCESS;
     };
 
     struct CachedDisplay {

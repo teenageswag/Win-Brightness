@@ -236,6 +236,7 @@ void App::SyncPopup() {
     popupState.mode = m_state.mode;
     popupState.selection = m_state.monitors;
     popupState.monitors = m_controller.GetMonitors();
+    popupState.catalogError = m_controller.GetCatalogError();
     popupState.autostart = m_autostartEnabled;
     popupState.hotkeyAvailable = m_hotkeyRegistered;
     m_popup->SetState(std::move(popupState));
@@ -388,6 +389,12 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
     case WM_DISPLAYCHANGE:
         m_controller.RequestMonitorRefresh();
         return 0;
+
+    case WM_POWERBROADCAST:
+        if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND) {
+            m_controller.RequestMonitorRefresh();
+        }
+        return TRUE;
 
     case BrightnessController::kMonitorsChangedMessage:
         NormalizeMonitorSelection();

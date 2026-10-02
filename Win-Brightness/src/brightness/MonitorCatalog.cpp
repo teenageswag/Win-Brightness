@@ -7,6 +7,7 @@ namespace {
     struct EnumerationContext {
         std::vector<MonitorInfo> monitors;
         std::unordered_set<std::wstring> ids;
+        DWORD error = ERROR_SUCCESS;
     };
 
     std::wstring ReadMonitorId(const MONITORINFOEX& info, DISPLAY_DEVICE& device) {
@@ -18,13 +19,15 @@ namespace {
         return device.DeviceID[0] != L'\0' ? device.DeviceID : info.szDevice;
     }
 
-    BOOL CALLBACK EnumerateMonitor(HMONITOR handle, HDC, LPRECT, LPARAM data) {
+    BOOL CALLBACK EnumerateMonitor(HMONITOR handle, HDC, LPRECT, LPARAM data) noexcept {
         auto& context = *reinterpret_cast<EnumerationContext*>(data);
+        try {
 
         MONITORINFOEX info{};
         info.cbSize = sizeof(info);
         if (!GetMonitorInfo(handle, &info)) {
-            return TRUE;
+            context.error = GetLastError();
+            return FALSE;
         }
 
         DISPLAY_DEVICE device{};
@@ -44,12 +47,22 @@ namespace {
         monitor.primary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
         context.monitors.push_back(std::move(monitor));
         return TRUE;
+        } catch (const std::bad_alloc&) {
+            context.error = ERROR_NOT_ENOUGH_MEMORY;
+            return FALSE;
+        } catch (...) {
+            context.error = ERROR_GEN_FAILURE;
+            return FALSE;
+        }
     }
 } // namespace
 
-std::vector<MonitorInfo> MonitorCatalog::Enumerate() {
+std::expected<std::vector<MonitorInfo>, DWORD> MonitorCatalog::Enumerate() {
     EnumerationContext context;
-    EnumDisplayMonitors(nullptr, nullptr, EnumerateMonitor, reinterpret_cast<LPARAM>(&context));
+    if (!EnumDisplayMonitors(nullptr, nullptr, EnumerateMonitor, reinterpret_cast<LPARAM>(&context))) {
+        const DWORD error = context.error != ERROR_SUCCESS ? context.error : GetLastError();
+        return std::unexpected(error != ERROR_SUCCESS ? error : ERROR_GEN_FAILURE);
+    }
 
     std::ranges::sort(context.monitors, [](const MonitorInfo& left, const MonitorInfo& right) {
         if (left.primary != right.primary) {
