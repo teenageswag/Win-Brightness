@@ -22,4 +22,6 @@ struct PopupActions {
     std::function<void(BrightnessMode)> setMode;
     std::function<void(MonitorSelection)> setSelection;
     std::function<void(bool)> setAutostart;
+    std::function<void(HRESULT)> reportUiError;
+    std::function<void(POINT)> showContextMenu;
 };

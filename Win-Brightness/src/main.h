@@ -7,13 +7,11 @@
 #endif
 
 #include "app/App.h"
-#include <gdiplus.h>
 #include <windows.h>
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "shell32.lib")
-#pragma comment(lib, "gdiplus.lib")
 
 #pragma comment(                                                               \
     linker,                                                                    \

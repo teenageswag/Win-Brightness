@@ -104,15 +104,21 @@ bool App::Init() {
 }
 
 int App::Run() {
-    MSG message{};
     while (true) {
-        const BOOL result = GetMessage(&message, nullptr, 0, 0);
-        if (result > 0) {
+        // Wait on DXGI only while the island is dirty or moving. Idle has no
+        // timer, render thread, polling, or periodic wakeup.
+        const HANDLE frame = m_popup ? m_popup->FrameWaitHandle() : nullptr;
+        const DWORD count = frame ? 1 : 0;
+        const DWORD result = MsgWaitForMultipleObjectsEx(count, frame ? &frame : nullptr, INFINITE,
+                                                         QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        if (result == WAIT_FAILED) return 1;
+        if (frame && result == WAIT_OBJECT_0) m_popup->RenderFrame();
+        MSG message{};
+        for (int dispatched = 0; dispatched < 64 && PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++dispatched) {
+            if (message.message == WM_QUIT) return static_cast<int>(message.wParam);
             TranslateMessage(&message);
             DispatchMessage(&message);
-            continue;
         }
-        return result == 0 ? static_cast<int>(message.wParam) : 1;
     }
 }
 

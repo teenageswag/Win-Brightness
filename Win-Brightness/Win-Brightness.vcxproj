@@ -172,6 +172,7 @@
     <ClCompile Include="src\ui\PopupView.cpp" />
     <ClCompile Include="src\ui\island\Fonts.cpp" />
     <ClCompile Include="src\ui\island\Renderer.cpp" />
+    <ClCompile Include="src\ui\island\FrameClock.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\app\App.h" />
@@ -191,6 +192,7 @@
     <ClInclude Include="src\ui\island\Layout.h" />
     <ClInclude Include="src\ui\island\Spring.h" />
     <ClInclude Include="src\ui\island\Renderer.h" />
+    <ClInclude Include="src\ui\island\FrameClock.h" />
     <ClInclude Include="src\ui\PopupModel.h" />
   </ItemGroup>
   <ItemGroup>

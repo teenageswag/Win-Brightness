@@ -52,11 +52,15 @@ target_link_libraries(ControllerTests PRIVATE user32)
 add_test(NAME ControllerTests COMMAND ControllerTests)
 add_executable(PopupTests PopupTests.cpp
     ../Win-Brightness/src/ui/PopupView.cpp
+    ../Win-Brightness/src/ui/island/FrameClock.cpp
+    ../Win-Brightness/src/ui/island/Renderer.cpp
+    ../Win-Brightness/src/ui/island/Fonts.cpp
+    ../Win-Brightness/src/resources/resources.rc
     ../Win-Brightness/src/platform/Win32Helpers.cpp)
 target_compile_features(PopupTests PRIVATE cxx_std_23)
-target_compile_options(PopupTests PRIVATE /W4 /WX /permissive-)
+target_compile_options(PopupTests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4;/WX;/permissive->)
 target_compile_definitions(PopupTests PRIVATE UNICODE _UNICODE)
-target_include_directories(PopupTests PRIVATE ../Win-Brightness/src)
+target_include_directories(PopupTests PRIVATE ../Win-Brightness/src ../Win-Brightness/src/resources)
 target_link_libraries(PopupTests PRIVATE gdiplus user32 gdi32 advapi32)
 add_test(NAME PopupTests COMMAND PopupTests)
 add_executable(OverlayTests OverlayTests.cpp ../Win-Brightness/src/ui/DimOverlay.cpp)
