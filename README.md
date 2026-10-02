@@ -15,7 +15,13 @@ A small Windows utility for dimming one display, a custom group, or every connec
 - Per-monitor DPI awareness, keyboard navigation, and Windows High Contrast support
 - Single-instance behavior: launching trenches again opens the existing control panel
 
-Hardware mode is available only when a display exposes the DDC/CI brightness VCP feature. Many televisions and some HDMI adapters do not expose it; those displays are marked `No DDC/CI` in the monitor list and remain available in Software mode.
+Hardware mode is available only when a display exposes the DDC/CI brightness VCP feature. Explicitly unsupported displays are marked `No DDC/CI` and remain available in Software mode. Temporary detection or write failures are shown as `DDC/CI failed` with the Windows error code. The app retries temporary failures up to three times and checks displays again after resume or a display configuration change.
+
+Pausing Hardware mode sets the selected displays to 100%. Switching to Software mode or excluding a display restores the hardware brightness changed by the app to 100% before enabling an overlay. Exiting leaves the last hardware brightness in place; software overlays are removed.
+
+Successful duplicate hardware writes are skipped until the monitor catalog is refreshed. Changes made through the monitor's own controls are not polled.
+
+Windows startup commands have a [260-character limit](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys). For a longer app path, trenches uses its short path when available; otherwise it reports that a shorter app path is needed.
 
 ## Controls
 
@@ -43,7 +49,7 @@ Requirements:
 Open `Win-Brightness.slnx` in Visual Studio and build `Release | x64`, or run MSBuild directly. The executable is written to:
 
 ```text
-build/bin/x64/Release/trenches.exe
+build/Release/trenches.exe
 ```
 
 ## Architecture
@@ -57,4 +63,6 @@ Win-Brightness/src/
 └── ui/           Control panel and per-monitor overlay windows
 ```
 
-The application uses Win32, GDI+, DXVA2 monitor APIs, the Windows registry, and a background worker for display I/O.
+The application uses Win32, GDI+, DXVA2 monitor APIs, and the Windows registry. The UI thread owns the control panel and dimming windows. A background worker owns physical monitor handles, enumeration, DDC/CI queries, writes, and retry scheduling; it publishes results to the UI through window messages.
+
+See [tests/README.md](tests/README.md) for the Windows regression suite.
