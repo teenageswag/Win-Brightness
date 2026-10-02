@@ -1,3 +1,7 @@
 #include "resources.h"
 
 IDI_APP_ICON ICON "app.ico"
+IDR_INTER_REGULAR RCDATA "fonts/Inter-Regular.ttf"
+IDR_INTER_MEDIUM RCDATA "fonts/Inter-Medium.ttf"
+IDR_INTER_SEMIBOLD RCDATA "fonts/Inter-SemiBold.ttf"
+IDR_INTER_LICENSE RCDATA "fonts/LICENSE.txt"

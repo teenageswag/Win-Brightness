@@ -170,6 +170,7 @@
     <ClCompile Include="src\platform\Win32Helpers.cpp" />
     <ClCompile Include="src\ui\DimOverlay.cpp" />
     <ClCompile Include="src\ui\PopupView.cpp" />
+    <ClCompile Include="src\ui\island\Fonts.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\app\App.h" />
@@ -184,6 +185,10 @@
     <ClInclude Include="src\resources\resources.h" />
     <ClInclude Include="src\ui\DimOverlay.h" />
     <ClInclude Include="src\ui\PopupView.h" />
+    <ClInclude Include="src\ui\island\Fonts.h" />
+    <ClInclude Include="src\ui\island\Geometry.h" />
+    <ClInclude Include="src\ui\island\Layout.h" />
+    <ClInclude Include="src\ui\island\Spring.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="src\resources\resources.rc" />
@@ -192,6 +197,9 @@
     <Image Include="src\resources\app.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="CopyInterLicense" AfterTargets="Build">
+    <Copy SourceFiles="$(ProjectDir)src\resources\fonts\LICENSE.txt" DestinationFiles="$(OutDir)Inter-LICENSE.txt" />
+  </Target>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>

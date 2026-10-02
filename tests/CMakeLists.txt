@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(TrenchesTests LANGUAGES CXX)
+project(TrenchesTests LANGUAGES CXX RC)
 if(NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "Tests require Windows and MSVC")
 endif()
@@ -9,6 +9,14 @@ target_compile_features(IslandMathTests PRIVATE cxx_std_23)
 target_compile_options(IslandMathTests PRIVATE /W4 /WX /permissive-)
 target_include_directories(IslandMathTests PRIVATE ../Win-Brightness/src)
 add_test(NAME IslandMathTests COMMAND IslandMathTests)
+add_executable(FontTests FontTests.cpp ../Win-Brightness/src/ui/island/Fonts.cpp
+    ../Win-Brightness/src/resources/resources.rc)
+target_compile_features(FontTests PRIVATE cxx_std_23)
+target_compile_options(FontTests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4;/WX;/permissive->)
+target_compile_definitions(FontTests PRIVATE UNICODE _UNICODE)
+target_include_directories(FontTests PRIVATE ../Win-Brightness/src ../Win-Brightness/src/resources)
+target_link_libraries(FontTests PRIVATE dwrite)
+add_test(NAME FontTests COMMAND FontTests)
 add_executable(SettingsTests SettingsTests.cpp
     ../Win-Brightness/src/app/SettingsStore.cpp
     ../Win-Brightness/src/platform/Win32Helpers.cpp)
