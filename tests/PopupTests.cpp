@@ -33,10 +33,11 @@ void Settle(PopupView& popup) {
 int main() try {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     int committed = -1, commits = 0, committedBeforeMode = -1, selectionChanges = 0;
+    MonitorSelection lastSelection;
     PopupActions actions;
     actions.setBrightness = [&](int value) { committed = value; ++commits; };
     actions.setMode = [&](BrightnessMode) { committedBeforeMode = committed; };
-    actions.setSelection = [&](MonitorSelection) { ++selectionChanges; };
+    actions.setSelection = [&](MonitorSelection selection) { ++selectionChanges; lastSelection = std::move(selection); };
     PopupView popup(GetModuleHandleW(nullptr), std::move(actions));
     Check(popup.Register() && popup.Create(), "create popup");
     popup.SetPreferences({island::Theme::Dark, false, false});
@@ -108,6 +109,15 @@ int main() try {
     Check(GetCapture() != popup.GetHWnd(), "hot unplug cancels drag");
     popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
     Check(commits == 0, "hot unplug does not commit to a different row");
+    popup.SetState(saved);
+
+    Click(popup, popup.GetLayout().rows[1].label);
+    auto reordered = saved;
+    std::swap(reordered.monitors[1], reordered.monitors[2]);
+    popup.SetState(reordered);
+    popup.HandleMessage(popup.GetHWnd(), WM_KEYDOWN, VK_SPACE, 0);
+    Check(!lastSelection.all && lastSelection.ids == std::vector<std::wstring>{L"1"},
+          "keyboard focus follows monitor ID after catalog reorder");
     popup.SetState(saved);
 
     RECT suggested{100, 150, 900, 750};

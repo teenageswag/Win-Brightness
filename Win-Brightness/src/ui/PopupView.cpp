@@ -428,6 +428,9 @@ void PopupView::SetState(PopupState state) {
             r.FinishDrag(false); r.state.brightness = incomingBrightness; r.slider.Snap(incomingBrightness);
         }
         else r.pressed.monitor = static_cast<size_t>(found - r.state.monitors.begin());
+    const bool monitorFocus = r.focus.control == island::Control::Slider || r.focus.control == island::Control::Monitor;
+    const std::wstring focusedId = monitorFocus && r.focus.monitor < r.state.monitors.size()
+        ? r.state.monitors[r.focus.monitor].id : L"";
     }
     if (r.focus.monitor >= r.state.monitors.size()) r.focus = {island::Control::Expand};
     if (!r.dragging && !r.pendingBrightness) r.slider.Target(r.state.brightness);
@@ -438,6 +441,11 @@ void PopupView::SetState(PopupState state) {
     r.Tooltip(false); r.AccessibleName(); if (IsVisible()) r.Position();
 }
 void PopupView::SetPreferences(island::Preferences preferences) {
+    if (!focusedId.empty()) {
+        const auto found = std::ranges::find_if(r.state.monitors, [&focusedId](const auto& monitor) { return monitor.id == focusedId; });
+        r.focus = found == r.state.monitors.end() ? island::Target{island::Control::Expand}
+            : island::Target{r.focus.control, static_cast<size_t>(found - r.state.monitors.begin())};
+    }
     auto& r = *m_impl;
     r.preferences = preferences; r.RefreshMotionPreference();
     if (r.renderer) r.renderer->RefreshTheme();
