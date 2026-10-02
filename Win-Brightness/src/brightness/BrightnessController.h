@@ -2,7 +2,6 @@
 
 #include "BrightnessTypes.h"
 #include "HardwareBrightness.h"
-#include "SoftwareBrightness.h"
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
@@ -66,5 +65,4 @@ private:
     std::vector<std::wstring> m_appliedMonitorIds;
 
     HardwareBrightness m_hardware;
-    SoftwareBrightness m_software;
 };

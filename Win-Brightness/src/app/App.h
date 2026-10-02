@@ -1,5 +1,6 @@
 #pragma once
 #include "../brightness/BrightnessController.h"
+#include "../brightness/SoftwareBrightness.h"
 #include "../ui/PopupView.h"
 #include "SettingsStore.h"
 #include <memory>
@@ -24,6 +25,7 @@ private:
     void ShowContextMenu(POINT pt);
     void TogglePopup(POINT monitorPoint, bool keyboardInvoked);
     void SyncPopup();
+    void ApplySoftwareBrightness();
     void SetBrightness(int percent);
     void SetBrightnessMode(BrightnessMode mode);
     void SetEnabled(bool enabled);
@@ -38,6 +40,7 @@ private:
     HWND m_hMsgWnd = nullptr;
     HICON m_hAppIcon = nullptr;
     BrightnessController m_controller;
+    SoftwareBrightness m_software;
     SettingsStore m_settings;
     AppSettings m_state;
     std::unique_ptr<PopupView> m_popup;

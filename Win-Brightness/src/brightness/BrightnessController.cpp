@@ -40,7 +40,6 @@ void BrightnessController::Cleanup() {
         m_workerThread.join();
     }
 
-    m_software.Reset();
     m_hardware.ReleaseMonitors();
 }
 
@@ -161,7 +160,6 @@ void BrightnessController::WorkerThreadProc() {
         ApplyBrightness(state);
     }
 
-    m_software.Reset();
 }
 
 void BrightnessController::ApplyBrightness(const ApplyState& state) {
@@ -185,14 +183,7 @@ void BrightnessController::ApplyBrightness(const ApplyState& state) {
         }
     }
 
-    if (state.mode == BrightnessMode::Software) {
-        if (state.enabled) {
-            m_software.ApplyBrightness(state.brightness, targets);
-        } else {
-            m_software.Reset();
-        }
-    } else {
-        m_software.Reset();
+    if (state.mode == BrightnessMode::Hardware) {
         m_hardware.ApplyBrightness(state.enabled ? state.brightness : kMaxBrightness, targetIds);
     }
 

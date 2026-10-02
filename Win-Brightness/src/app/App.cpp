@@ -35,6 +35,7 @@ App::~App() {
     }
     RemoveTrayIcon();
     m_popup.reset();
+    m_software.Reset();
 
     if (m_hMsgWnd) {
         DestroyWindow(m_hMsgWnd);
@@ -76,6 +77,7 @@ bool App::Init() {
     }
 
     NormalizeMonitorSelection();
+    ApplySoftwareBrightness();
     if (!CreateMsgWindow()) {
         return false;
     }
@@ -242,9 +244,28 @@ void App::SyncPopup() {
     m_popup->SetState(std::move(popupState));
 }
 
+void App::ApplySoftwareBrightness() {
+    if (!m_state.enabled || m_state.mode != BrightnessMode::Software) {
+        m_software.Reset();
+        return;
+    }
+
+    auto monitors = m_controller.GetMonitors();
+    std::erase_if(monitors, [this](const MonitorInfo& monitor) {
+        return !m_state.monitors.Contains(monitor.id);
+    });
+    m_software.ApplyBrightness(m_state.brightness, monitors);
+    // Keep the controls above the newly positioned topmost overlays.
+    if (m_popup && m_popup->IsVisible()) {
+        SetWindowPos(m_popup->GetHWnd(), HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+}
+
 void App::SetBrightness(int percent) {
     m_state.brightness = ClampBrightness(percent);
     m_controller.SetBrightness(m_state.brightness);
+    ApplySoftwareBrightness();
     m_settings.Save(m_state);
     UpdateTrayIcon();
     SyncPopup();
@@ -253,6 +274,7 @@ void App::SetBrightness(int percent) {
 void App::SetBrightnessMode(BrightnessMode mode) {
     m_state.mode = mode;
     m_controller.SetBrightnessMode(mode);
+    ApplySoftwareBrightness();
     m_settings.Save(m_state);
     UpdateTrayIcon();
     SyncPopup();
@@ -261,6 +283,7 @@ void App::SetBrightnessMode(BrightnessMode mode) {
 void App::SetEnabled(bool enabled) {
     m_state.enabled = enabled;
     m_controller.SetEnabled(enabled);
+    ApplySoftwareBrightness();
     m_settings.Save(m_state);
     UpdateTrayIcon();
     SyncPopup();
@@ -276,6 +299,7 @@ void App::SetMonitorSelection(MonitorSelection selection) {
 
     m_state.monitors = std::move(selection);
     m_controller.SetMonitorSelection(m_state.monitors);
+    ApplySoftwareBrightness();
     m_settings.Save(m_state);
     UpdateTrayIcon();
     SyncPopup();
@@ -367,6 +391,7 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
     case WM_DISPLAYCHANGE:
         m_controller.RefreshMonitors();
         NormalizeMonitorSelection();
+        ApplySoftwareBrightness();
         UpdateTrayIcon();
         SyncPopup();
         return 0;
