@@ -91,6 +91,20 @@ int main() try {
     failNextAllocation = false;
     Check(noAllocation && fake::destroyed == beforeRelease + 2,
           "release physical handles without allocating memory");
+
+    fake::probeFailureMask = 3;
+    fake::probeError = ERROR_SUCCESS;
+    hardware.RefreshMonitors(monitors);
+    Check(monitors[0].hardwareStatus == HardwareStatus::Failed &&
+          monitors[0].hardwareError == ERROR_GEN_FAILURE,
+          "FALSE query with no error code remains a failure");
+    fake::probeFailureMask = 0;
+    fake::writeFailureMask = 3;
+    fake::writeError = ERROR_SUCCESS;
+    hardware.RefreshMonitors(monitors);
+    results = hardware.ApplyBrightness(60, {L"display"});
+    Check(results.size() == 2 && results[0].error == ERROR_GEN_FAILURE &&
+          results[1].error == ERROR_GEN_FAILURE, "FALSE writes with no error code remain failures");
     std::puts("HardwareTests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());

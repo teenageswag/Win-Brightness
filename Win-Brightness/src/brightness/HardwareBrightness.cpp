@@ -9,6 +9,11 @@
 namespace {
     constexpr BYTE kBrightnessVcpCode = 0x10;
 
+    DWORD MonitorFailureCode() {
+        const DWORD error = GetLastError();
+        return error != ERROR_SUCCESS ? error : ERROR_GEN_FAILURE;
+    }
+
     struct PhysicalBatch {
         std::vector<PHYSICAL_MONITOR> monitors;
         explicit PhysicalBatch(DWORD count) : monitors(count) {}
@@ -24,7 +29,7 @@ namespace {
 
 void HardwareBrightness::PhysicalMonitorDeleter::operator()(void* handle) const noexcept {
     if (!DestroyPhysicalMonitor(handle)) {
-        const DWORD error = GetLastError();
+        const DWORD error = MonitorFailureCode();
         wchar_t message[96]{};
         swprintf_s(message, L"trenches: DestroyPhysicalMonitor failed (%lu)\n", error);
         OutputDebugStringW(message);
@@ -45,7 +50,7 @@ void HardwareBrightness::RefreshMonitors(std::vector<MonitorInfo>& monitors, con
         monitor.hardwareStatus = HardwareStatus::Unknown;
         DWORD physicalCount = 0;
         if (!GetNumberOfPhysicalMonitorsFromHMONITOR(monitor.handle, &physicalCount)) {
-            monitor.hardwareError = GetLastError();
+            monitor.hardwareError = MonitorFailureCode();
             monitor.hardwareStatus = IsUnsupportedHardwareError(monitor.hardwareError)
                 ? HardwareStatus::Unsupported : HardwareStatus::Failed;
             continue;
@@ -58,7 +63,7 @@ void HardwareBrightness::RefreshMonitors(std::vector<MonitorInfo>& monitors, con
 
         PhysicalBatch batch(physicalCount);
         if (!GetPhysicalMonitorsFromHMONITOR(monitor.handle, physicalCount, batch.monitors.data())) {
-            monitor.hardwareError = GetLastError();
+            monitor.hardwareError = MonitorFailureCode();
             monitor.hardwareStatus = IsUnsupportedHardwareError(monitor.hardwareError)
                 ? HardwareStatus::Unsupported : HardwareStatus::Failed;
             continue;
@@ -76,7 +81,7 @@ void HardwareBrightness::RefreshMonitors(std::vector<MonitorInfo>& monitors, con
             MC_VCP_CODE_TYPE type = MC_SET_PARAMETER;
             const BOOL queried = GetVCPFeatureAndVCPFeatureReply(
                 owned.get(), kBrightnessVcpCode, &type, &current, &maximum);
-            const DWORD error = queried ? ERROR_SUCCESS : GetLastError();
+            const DWORD error = queried ? ERROR_SUCCESS : MonitorFailureCode();
             if (queried && type == MC_SET_PARAMETER && maximum > 0 && current <= maximum) {
                 display.monitors.push_back({std::move(owned), maximum});
                 monitor.hardwareBrightness = true;
@@ -131,7 +136,7 @@ std::vector<HardwareWriteResult> HardwareBrightness::ApplyBrightness(
                 if (SetVCPFeature(monitor.handle.get(), kBrightnessVcpCode, target)) {
                     monitor.lastWritten = target;
                 } else {
-                    error = GetLastError();
+                    error = MonitorFailureCode();
                 }
             }
             results.push_back({display.id, i, target, error});
