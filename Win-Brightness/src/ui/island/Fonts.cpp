@@ -19,8 +19,11 @@ public:
     ResourceStream(HMODULE module, UINT id) {
         const HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(id), RT_RCDATA);
         if (resource) {
-            m_size = SizeofResource(module, resource);
-            m_data = static_cast<const BYTE*>(LockResource(LoadResource(module, resource)));
+            const HGLOBAL loaded = LoadResource(module, resource);
+            if (loaded) {
+                m_data = static_cast<const BYTE*>(LockResource(loaded));
+                if (m_data) m_size = SizeofResource(module, resource);
+            }
         }
     }
     HRESULT STDMETHODCALLTYPE ReadFileFragment(const void** start, UINT64 offset, UINT64 size,
