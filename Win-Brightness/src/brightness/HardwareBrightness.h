@@ -7,6 +7,7 @@
 #include "BrightnessTypes.h"
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <physicalmonitorenumerationapi.h>
 #include <string>
 #include <vector>
@@ -42,6 +43,7 @@ private:
         UniquePhysicalMonitor handle;
         DWORD maxBrightness = 100;
         DWORD discoveryError = ERROR_SUCCESS;
+        std::optional<DWORD> lastWritten;
     };
 
     struct CachedDisplay {

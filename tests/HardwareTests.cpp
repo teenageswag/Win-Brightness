@@ -36,6 +36,15 @@ int main() try {
     Check(results[0].physicalIndex == 0 && results[1].physicalIndex == 1 &&
           results[0].requestedValue == 35, "identify failed physical monitor and requested value");
 
+    hardware.ApplyBrightness(35, {L"display"});
+    Check(fake::writes.size() == 3 && fake::writes.back().handle == 2,
+          "skip successful duplicate write and retry failed write");
+    fake::writeFailureMask = 0;
+    hardware.ApplyBrightness(35, {L"display"});
+    const size_t afterRecovery = fake::writes.size();
+    hardware.ApplyBrightness(35, {L"display"});
+    Check(fake::writes.size() == afterRecovery, "cache only successfully written values");
+
     results = hardware.ApplyBrightness(35, {L"missing"});
     Check(results.size() == 1 && results[0].error == ERROR_NOT_SUPPORTED,
           "report missing physical target");
@@ -47,7 +56,9 @@ int main() try {
           "capture discovery error before releasing handle");
     Check(monitors[0].hardwareStatus == HardwareStatus::Failed,
           "distinguish discovery failure from unsupported brightness");
+    const size_t beforeRefreshWrite = fake::writes.size();
     results = hardware.ApplyBrightness(35, {L"display"});
+    Check(fake::writes.size() == beforeRefreshWrite + 1, "invalidate write cache when handles refresh");
     Check(results.size() == 2 && results[1].physicalIndex == 1 && results[1].error == ERROR_GEN_FAILURE,
           "preserve rejected physical endpoint and error during writes");
     hardware.ReleaseMonitors();

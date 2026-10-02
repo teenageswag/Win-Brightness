@@ -110,7 +110,7 @@ std::vector<HardwareWriteResult> HardwareBrightness::ApplyBrightness(
     std::vector<HardwareWriteResult> results;
     std::unordered_set<std::wstring> found;
 
-    for (const CachedDisplay& display : m_displays) {
+    for (CachedDisplay& display : m_displays) {
         if (cancelled && cancelled->load(std::memory_order_relaxed)) break;
         if (!targets.contains(display.id)) {
             continue;
@@ -119,15 +119,21 @@ std::vector<HardwareWriteResult> HardwareBrightness::ApplyBrightness(
         found.insert(display.id);
         for (size_t i = 0; i < display.monitors.size(); ++i) {
             if (cancelled && cancelled->load(std::memory_order_relaxed)) break;
-            const CachedPhysicalMonitor& monitor = display.monitors[i];
+            CachedPhysicalMonitor& monitor = display.monitors[i];
             if (!monitor.handle) {
                 results.push_back({display.id, i, 0, monitor.discoveryError});
                 continue;
             }
             const double position = clamped / 100.0;
             const DWORD target = static_cast<DWORD>(monitor.maxBrightness * position + 0.5);
-            const BOOL written = SetVCPFeature(monitor.handle.get(), kBrightnessVcpCode, target);
-            const DWORD error = written ? ERROR_SUCCESS : GetLastError();
+            DWORD error = ERROR_SUCCESS;
+            if (monitor.lastWritten != target) {
+                if (SetVCPFeature(monitor.handle.get(), kBrightnessVcpCode, target)) {
+                    monitor.lastWritten = target;
+                } else {
+                    error = GetLastError();
+                }
+            }
             results.push_back({display.id, i, target, error});
         }
     }
