@@ -105,12 +105,12 @@ struct PopupView::Impl {
     }
     island::Layout Layout(bool isExpanded) const {
         return island::Layout::Build(static_cast<float>(width.Value()), static_cast<float>(height.Value()),
-            isExpanded, state.monitors.size(), Primary(), scroll);
+            isExpanded, state.monitors.size(), Primary(), scroll, maximumWidth);
     }
     island::Layout InteractiveLayout() const { return Layout(expansion.Value() >= 0.5); }
     void Targets() {
         width.Target(std::min(expanded ? island::kExpandedWidth : island::kCompactWidth, maximumWidth));
-        height.Target(expanded ? island::ExpandedHeight(state.monitors.size(), maximumHeight) : island::kCompactHeight);
+        height.Target(expanded ? island::ExpandedHeight(state.monitors.size(), maximumHeight, maximumWidth) : island::kCompactHeight);
         expansion.Target(expanded ? 1.0 : 0.0);
         if (!Animate()) {
             width.Snap(width.Target()); height.Snap(height.Target()); expansion.Snap(expansion.Target());
@@ -127,7 +127,7 @@ struct PopupView::Impl {
         if (updateDpi) dpi = static_cast<UINT>(GetDpiForPoint({info.rcMonitor.left + 1, info.rcMonitor.top + 1}));
         maximumWidth = std::max(200.0f, std::min(island::kExpandedWidth,
             static_cast<float>(info.rcMonitor.right - info.rcMonitor.left) / Scale() - island::kShadowMargin * 2));
-        maximumHeight = std::max(island::kCompactHeight, std::min(island::ExpandedHeight(5, 10000),
+        maximumHeight = std::max(island::kCompactHeight, std::min(island::ExpandedHeight(5, 10000, maximumWidth),
             static_cast<float>(info.rcWork.bottom - info.rcMonitor.top) / Scale() - island::kShadowMargin));
     }
     void Position() {

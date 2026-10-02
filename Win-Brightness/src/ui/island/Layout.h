@@ -15,9 +15,10 @@ inline constexpr float kRowStride = kRowHeight + kRowGap;
 inline constexpr float kShadowMargin = 16.0f;
 inline constexpr size_t kVisibleMonitors = 5;
 
-inline float ExpandedHeight(size_t monitorCount, float availableHeight) {
+inline float FooterHeight(float availableWidth) { return availableWidth < 400.0f ? 83.0f : 34.0f; }
+inline float ExpandedHeight(size_t monitorCount, float availableHeight, float availableWidth = kExpandedWidth) {
     const size_t rows = std::clamp(monitorCount, size_t{1}, kVisibleMonitors);
-    return std::min(64.0f + static_cast<float>(rows) * kRowStride, availableHeight);
+    return std::min(30.0f + FooterHeight(availableWidth) + static_cast<float>(rows) * kRowStride, availableHeight);
 }
 
 enum class Control { None, Slider, Monitor, Software, Hardware, Power, Scope, Expand };
@@ -35,7 +36,7 @@ struct Layout {
     bool expanded = false;
 
     static Layout Build(float width, float height, bool isExpanded, size_t monitorCount,
-                        size_t primaryIndex, float scroll) {
+                        size_t primaryIndex, float scroll, float availableWidth = kExpandedWidth) {
         Layout result;
         result.expanded = isExpanded;
         result.shell = {0.0f, 0.0f, width, height};
@@ -47,7 +48,8 @@ struct Layout {
                                    {62.0f, 43.0f, width - 102.0f, 49.0f}, primaryIndex});
             return result;
         }
-        const float footerTop = height - kPadding - 34.0f;
+        const bool narrow = availableWidth < 400.0f;
+        const float footerTop = height - kPadding - FooterHeight(availableWidth);
         result.viewport = {kPadding, kPadding, width - kPadding, footerTop - 15.0f};
         float top = kPadding - scroll;
         result.rows.reserve(monitorCount);
@@ -56,13 +58,14 @@ struct Layout {
                                   {kPadding, top + 30.0f, width - kPadding, top + kRowHeight}, i});
             top += kRowStride;
         }
-        const float modeWidth = std::max(130.0f, (width - 30.0f) * 0.44f);
+        const float modeWidth = narrow ? width - 30.0f : std::max(130.0f, (width - 30.0f) * 0.452f);
         result.software = {kPadding, footerTop, kPadding + modeWidth * 0.5f, footerTop + 34.0f};
         result.hardware = {result.software.right, footerTop, kPadding + modeWidth, footerTop + 34.0f};
-        result.scope = {result.hardware.right + 15.0f, footerTop,
-                        result.hardware.right + 67.0f, footerTop + 34.0f};
-        result.expand = {width - kPadding - 24.0f, footerTop, width - kPadding, footerTop + 34.0f};
-        result.power = {result.scope.right + 15.0f, footerTop, result.expand.left - 15.0f, footerTop + 34.0f};
+        const float actionsTop = footerTop + (narrow ? 49.0f : 0.0f);
+        const float scopeLeft = narrow ? kPadding : result.hardware.right + 15.0f;
+        result.scope = {scopeLeft, actionsTop, scopeLeft + 67.0f, actionsTop + 34.0f};
+        result.expand = {width - kPadding - 24.0f, actionsTop, width - kPadding, actionsTop + 34.0f};
+        result.power = {result.scope.right + 15.0f, actionsTop, result.expand.left - 15.0f, actionsTop + 34.0f};
         return result;
     }
 
