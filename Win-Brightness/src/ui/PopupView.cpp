@@ -317,7 +317,8 @@ bool PopupView::IsVisible() const {
 }
 
 void PopupView::SetState(PopupState state) {
-    state.brightness = ClampBrightness(state.brightness);
+    state.brightness = m_hasPendingBrightness
+        ? m_state.brightness : ClampBrightness(state.brightness);
     m_state = std::move(state);
     if (m_focus.kind == FocusKind::Monitor && m_focus.monitorIndex >= m_state.monitors.size()) {
         m_focus = {FocusKind::SelectedDisplays, 0};
@@ -430,6 +431,7 @@ void PopupView::EnsureFocusedMonitorVisible() {
 }
 
 void PopupView::Activate(const FocusTarget& target) {
+    CommitBrightness();
     switch (target.kind) {
     case FocusKind::Power:
         m_state.enabled = !m_state.enabled;
