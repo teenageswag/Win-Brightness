@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.25)
+project(TrenchesTests LANGUAGES CXX)
+if(NOT WIN32 OR NOT MSVC)
+    message(FATAL_ERROR "Tests require Windows and MSVC")
+endif()
+enable_testing()
+add_executable(SettingsTests SettingsTests.cpp
+    ../Win-Brightness/src/app/SettingsStore.cpp
+    ../Win-Brightness/src/platform/Win32Helpers.cpp)
+target_compile_features(SettingsTests PRIVATE cxx_std_23)
+target_compile_options(SettingsTests PRIVATE /W4 /WX /permissive-)
+target_compile_definitions(SettingsTests PRIVATE UNICODE _UNICODE)
+target_include_directories(SettingsTests PRIVATE ../Win-Brightness/src)
+target_link_libraries(SettingsTests PRIVATE advapi32 gdi32 user32)
+add_test(NAME SettingsTests COMMAND SettingsTests)

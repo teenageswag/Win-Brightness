@@ -34,18 +34,26 @@ bool SettingsStore::WriteDword(const wchar_t* valueName, DWORD value) const {
 std::vector<std::wstring> SettingsStore::ReadStringList(const wchar_t* valueName) const {
     DWORD size = 0;
     if (RegGetValue(HKEY_CURRENT_USER, kSettingsKey, valueName, RRF_RT_REG_MULTI_SZ, nullptr, nullptr, &size) != ERROR_SUCCESS ||
-        size < sizeof(wchar_t)) {
+        size < sizeof(wchar_t) || size % sizeof(wchar_t) != 0 || size > 64 * 1024) {
         return {};
     }
 
-    std::vector<wchar_t> buffer(size / sizeof(wchar_t));
-    if (RegGetValue(HKEY_CURRENT_USER, kSettingsKey, valueName, RRF_RT_REG_MULTI_SZ, nullptr, buffer.data(), &size) != ERROR_SUCCESS) {
+    std::vector<wchar_t> buffer(size / sizeof(wchar_t) + 2, L'\0');
+    DWORD capacity = static_cast<DWORD>(buffer.size() * sizeof(wchar_t));
+    if (RegGetValueW(HKEY_CURRENT_USER, kSettingsKey, valueName, RRF_RT_REG_MULTI_SZ,
+                     nullptr, buffer.data(), &capacity) != ERROR_SUCCESS ||
+        capacity % sizeof(wchar_t) != 0) {
         return {};
     }
 
     std::vector<std::wstring> values;
-    for (const wchar_t* current = buffer.data(); *current != L'\0'; current += std::wcslen(current) + 1) {
-        values.emplace_back(current);
+    const wchar_t* current = buffer.data();
+    const wchar_t* end = current + capacity / sizeof(wchar_t);
+    while (current < end && *current != L'\0') {
+        const wchar_t* terminator = std::find(current, end, L'\0');
+        if (terminator == end) return {};
+        values.emplace_back(current, terminator);
+        current = terminator + 1;
     }
     return values;
 }
@@ -76,7 +84,7 @@ AppSettings SettingsStore::Load() const {
 
     DWORD value = 0;
     if (TryReadDword(kBrightnessValue, value)) {
-        settings.brightness = ClampBrightness(static_cast<int>(value));
+        settings.brightness = static_cast<int>(std::clamp<DWORD>(value, kMinBrightness, kMaxBrightness));
     }
 
     if (TryReadDword(kModeValue, value)) {
@@ -114,7 +122,10 @@ bool SettingsStore::IsAutostartEnabled() const {
     wchar_t value[MAX_PATH * 2] = {};
     DWORD type = 0;
     DWORD size = sizeof(value);
-    const LONG result = RegQueryValueEx(key.Get(), kRunValue, nullptr, &type, reinterpret_cast<LPBYTE>(value), &size);
+    const LSTATUS result = RegGetValueW(
+        key.Get(), nullptr, kRunValue,
+        RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND | RRF_ZEROONFAILURE,
+        &type, value, &size);
     if (result != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ)) {
         return false;
     }
