@@ -4,6 +4,11 @@ if(NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "Tests require Windows and MSVC")
 endif()
 enable_testing()
+add_executable(IslandMathTests IslandMathTests.cpp)
+target_compile_features(IslandMathTests PRIVATE cxx_std_23)
+target_compile_options(IslandMathTests PRIVATE /W4 /WX /permissive-)
+target_include_directories(IslandMathTests PRIVATE ../Win-Brightness/src)
+add_test(NAME IslandMathTests COMMAND IslandMathTests)
 add_executable(SettingsTests SettingsTests.cpp
     ../Win-Brightness/src/app/SettingsStore.cpp
     ../Win-Brightness/src/platform/Win32Helpers.cpp)
