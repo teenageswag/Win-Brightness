@@ -606,6 +606,7 @@ int PopupView::MaximumScroll(const Layout& layout) const {
 LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_DPICHANGED: {
+        m_paintBuffer.reset();
         const RECT suggested = *reinterpret_cast<const RECT*>(lParam);
         SetWindowPos(hWnd, nullptr, suggested.left, suggested.top,
                      suggested.right - suggested.left, suggested.bottom - suggested.top,
@@ -628,8 +629,18 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         const Layout layout = BuildLayout();
         const Palette palette = GetPalette();
 
-        MemoryPaintDc buffer(target, width, height);
-        const HDC paintDc = buffer.Get() ? buffer.Get() : target;
+        if (width > 0 && height > 0 &&
+            (!m_paintBuffer || !m_paintBuffer->Get() || m_paintWidth != width || m_paintHeight != height)) {
+            try {
+                m_paintBuffer = std::make_unique<MemoryPaintDc>(target, width, height);
+                m_paintWidth = width;
+                m_paintHeight = height;
+            } catch (const std::bad_alloc&) {
+                m_paintBuffer.reset();
+            }
+        }
+        const HDC bufferDc = m_paintBuffer ? m_paintBuffer->Get() : nullptr;
+        const HDC paintDc = bufferDc ? bufferDc : target;
         if (paintDc) {
             using namespace Gdiplus;
             Graphics graphics(paintDc);
@@ -864,8 +875,8 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
                     static_cast<INT>(focusRect.bottom - focusRect.top - 1));
             }
 
-            if (buffer.Get()) {
-                BitBlt(target, 0, 0, width, height, buffer.Get(), 0, 0, SRCCOPY);
+            if (bufferDc) {
+                BitBlt(target, 0, 0, width, height, bufferDc, 0, 0, SRCCOPY);
             }
         }
 
@@ -1058,6 +1069,11 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         }
         return 0;
 
+    case WM_DISPLAYCHANGE:
+        m_paintBuffer.reset();
+        InvalidateRect(hWnd, nullptr, FALSE);
+        return 0;
+
     case WM_SETFOCUS:
     case WM_SETTINGCHANGE:
     case WM_THEMECHANGED:
@@ -1065,6 +1081,7 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         return 0;
 
     case WM_NCDESTROY:
+        m_paintBuffer.reset();
         SetWindowLongPtr(hWnd, GWLP_USERDATA, 0);
         if (hWnd == m_hWnd) m_hWnd = nullptr;
         return 0;

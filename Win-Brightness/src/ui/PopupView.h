@@ -2,6 +2,7 @@
 
 #include "../brightness/BrightnessTypes.h"
 #include <functional>
+#include <memory>
 #include <gdiplus.h>
 #include <vector>
 #include <windows.h>
@@ -26,6 +27,8 @@ struct PopupActions {
     std::function<void(MonitorSelection)> setSelection;
     std::function<void(bool)> setAutostart;
 };
+
+class MemoryPaintDc;
 
 class PopupView {
 public:
@@ -104,6 +107,9 @@ private:
     bool m_hasPendingBrightness = false;
     int m_scrollOffset = 0;
     ULONGLONG m_showTime = 0;
+    std::unique_ptr<MemoryPaintDc> m_paintBuffer;
+    int m_paintWidth = 0;
+    int m_paintHeight = 0;
 
     Layout BuildLayout() const;
     std::vector<FocusTarget> FocusOrder() const;
