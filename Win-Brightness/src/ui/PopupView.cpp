@@ -605,6 +605,18 @@ int PopupView::MaximumScroll(const Layout& layout) const {
 
 LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
+    case WM_DPICHANGED: {
+        const RECT suggested = *reinterpret_cast<const RECT*>(lParam);
+        SetWindowPos(hWnd, nullptr, suggested.left, suggested.top,
+                     suggested.right - suggested.left, suggested.bottom - suggested.top,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        const Layout layout = BuildLayout();
+        m_scrollOffset = std::clamp(m_scrollOffset, 0, MaximumScroll(layout));
+        EnsureFocusedMonitorVisible();
+        InvalidateRect(hWnd, nullptr, FALSE);
+        return 0;
+    }
+
     case WM_PAINT: {
         PAINTSTRUCT paint{};
         HDC target = BeginPaint(hWnd, &paint);

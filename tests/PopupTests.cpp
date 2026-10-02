@@ -28,6 +28,13 @@ int main() try {
     popup.HandleMessage(popup.GetHWnd(), WM_KEYDOWN, VK_TAB, 0);
     popup.HandleMessage(popup.GetHWnd(), WM_KEYDOWN, VK_RIGHT, 0);
     Check(committedBeforeMode == 73, "commit pending value before changing mode");
+
+    RECT suggested{100, 150, 900, 750};
+    popup.HandleMessage(popup.GetHWnd(), WM_DPICHANGED, MAKELONG(144, 144),
+                        reinterpret_cast<LPARAM>(&suggested));
+    RECT actual{};
+    Check(GetWindowRect(popup.GetHWnd(), &actual) && EqualRect(&suggested, &actual),
+          "apply suggested DPI rectangle");
     std::puts("PopupTests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());
