@@ -101,8 +101,11 @@ void DimOverlay::Apply(int percent, const std::vector<MonitorInfo>& monitors) {
 
             if (existing != m_windows.end()) {
                 existing->handle = window;
+                existing->bounds = {};
+                existing->alpha = 0;
             } else {
                 m_windows.push_back({monitor.id, window});
+                existing = std::prev(m_windows.end());
             }
         }
 
@@ -110,13 +113,19 @@ void DimOverlay::Apply(int percent, const std::vector<MonitorInfo>& monitors) {
             continue;
         }
 
-        SetLayeredWindowAttributes(window, 0, alpha, LWA_ALPHA);
-        SetWindowPos(
-            window, HWND_TOPMOST,
-            monitor.bounds.left, monitor.bounds.top,
-            monitor.bounds.right - monitor.bounds.left, monitor.bounds.bottom - monitor.bounds.top,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+        if (existing->alpha != alpha) {
+            if (!SetLayeredWindowAttributes(window, 0, alpha, LWA_ALPHA)) continue;
+            existing->alpha = alpha;
+        }
+        if (!EqualRect(&existing->bounds, &monitor.bounds) || !IsWindowVisible(window)) {
+            if (SetWindowPos(window, HWND_TOPMOST,
+                             monitor.bounds.left, monitor.bounds.top,
+                             monitor.bounds.right - monitor.bounds.left, monitor.bounds.bottom - monitor.bounds.top,
+                             SWP_NOACTIVATE | SWP_SHOWWINDOW)) {
+                existing->bounds = monitor.bounds;
+                RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            }
+        }
     }
 }
 

@@ -20,6 +20,8 @@ private:
     struct OverlayWindow {
         std::wstring monitorId;
         HWND handle = nullptr;
+        RECT bounds{};
+        BYTE alpha = 0;
     };
 
     bool RegisterWindowClass();
