@@ -34,18 +34,24 @@ int wmain(int argc, wchar_t** argv) try {
     frame.state = &state;
     frame.preferences.theme = island::Theme::Dark;
     frame.sliderValue = 72;
+    float scale = 1;
+    float scroll = 0;
     auto draw = [&](float w, float h, float expansion, const wchar_t* output) {
         frame.compact = island::Layout::Build(w, h, false, state.monitors.size(), 0, 0);
-        frame.expanded = island::Layout::Build(w, h, true, state.monitors.size(), 0, 0);
+        frame.expanded = island::Layout::Build(w, h, true, state.monitors.size(), 0, scroll, w);
         frame.expansion = expansion;
         frame.radius = expansion == 0 ? 32 : h * 0.14f;
-        SetWindowPos(window, nullptr, -10000, -10000, static_cast<int>(w + 32), static_cast<int>(h + 16),
+        SetWindowPos(window, nullptr, -10000, -10000, static_cast<int>((w + 32) * scale), static_cast<int>((h + 16) * scale),
                      SWP_NOACTIVATE | SWP_NOZORDER);
         Check(WaitForSingleObject(renderer.FrameHandle(), 2000) == WAIT_OBJECT_0, "VSync frame handle");
         const std::wstring path = argc > 1 ? std::wstring(argv[1]) + L"/" + output : L"";
         CheckHr(renderer.Draw(frame, path.empty() ? nullptr : path.c_str()), "render frame");
     };
     draw(344, 64, 0, L"compact-dark.png");
+    draw(420, island::ExpandedHeight(8, 1000), 1, L"five-monitors-dark.png");
+    scroll = island::kRowStride * 3;
+    draw(420, island::ExpandedHeight(8, 1000), 1, L"scrolled-dark.png");
+    scroll = 0;
     state.monitors.resize(2);
     draw(420, island::ExpandedHeight(2, 1000), 1, L"expanded-dark.png");
     frame.preferences.theme = island::Theme::Light;
@@ -54,7 +60,11 @@ int wmain(int argc, wchar_t** argv) try {
     frame.modePosition = 1;
     draw(420, island::ExpandedHeight(2, 1000), 1, L"hardware-light.png");
     CheckHr(renderer.Resize(144, island::ExpandedHeight(5, 1000)), "resize for DPI");
+    scale = 1.5f;
     draw(420, island::ExpandedHeight(2, 1000), 1, L"expanded-144.png");
+    scale = 1;
+    CheckHr(renderer.Resize(96, island::ExpandedHeight(5, 1000, 340)), "resize for narrow desktop");
+    draw(340, island::ExpandedHeight(2, 1000, 340), 1, L"narrow-light.png");
     std::puts("RendererTests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());

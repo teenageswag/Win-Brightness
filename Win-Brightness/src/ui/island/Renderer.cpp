@@ -500,11 +500,20 @@ HRESULT Renderer::SaveFramePng(const wchar_t* path) const {
     if (FAILED(hr)) return hr;
     D3D11_TEXTURE2D_DESC description{};
     texture->GetDesc(&description);
+    RECT client{};
+    if (!GetClientRect(r.window, &client)) return HRESULT_FROM_WIN32(GetLastError());
+    if (client.right <= 0 || client.bottom <= 0) return E_INVALIDARG;
+    const UINT width = std::min(description.Width, static_cast<UINT>(client.right));
+    const UINT height = std::min(description.Height, static_cast<UINT>(client.bottom));
+    const UINT left = (description.Width - width) / 2;
+    const D3D11_BOX crop{left, 0, 0, left + width, height, 1};
+    description.Width = width; description.Height = height;
     description.Usage = D3D11_USAGE_STAGING; description.BindFlags = 0;
     description.CPUAccessFlags = D3D11_CPU_ACCESS_READ; description.MiscFlags = 0;
     ComPtr<ID3D11Texture2D> staging;
     if (FAILED(hr = r.device->CreateTexture2D(&description, nullptr, &staging))) return hr;
-    r.immediate->CopyResource(staging.Get(), texture.Get());
+    // Match the composition visual's centered crop into the current HWND.
+    r.immediate->CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, texture.Get(), 0, &crop);
     D3D11_MAPPED_SUBRESOURCE mapped{};
     if (FAILED(hr = r.immediate->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return hr;
     struct Unmap { ID3D11DeviceContext* context; ID3D11Texture2D* texture; ~Unmap() { context->Unmap(texture, 0); } } unmap{r.immediate.Get(), staging.Get()};
