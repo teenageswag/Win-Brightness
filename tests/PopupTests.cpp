@@ -127,6 +127,9 @@ int main() try {
     popup.HandleMessage(popup.GetHWnd(), WM_DPICHANGED, MAKELONG(96, 96), reinterpret_cast<LPARAM>(&suggested));
     popup.SetPreferences({island::Theme::Light, false, true});
     popup.SetExpanded(false); Settle(popup); popup.SetExpanded(true);
+    const int beforeHiddenScope = selectionChanges;
+    Click(popup, popup.GetLayout().scope);
+    Check(selectionChanges == beforeHiddenScope, "invisible scope button cannot activate during morph");
     for (int i = 0; i < 3; ++i) {
         HANDLE frame = popup.FrameWaitHandle();
         Check(frame && WaitForSingleObject(frame, 2000) == WAIT_OBJECT_0, "morph frame"); popup.RenderFrame();
