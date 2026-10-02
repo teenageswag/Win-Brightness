@@ -5,6 +5,7 @@
 #endif
 
 #include "BrightnessTypes.h"
+#include <atomic>
 #include <mutex>
 #include <physicalmonitorenumerationapi.h>
 #include <string>
@@ -26,8 +27,9 @@ public:
     HardwareBrightness(const HardwareBrightness&) = delete;
     HardwareBrightness& operator=(const HardwareBrightness&) = delete;
 
-    void RefreshMonitors(std::vector<MonitorInfo>& monitors);
-    std::vector<HardwareWriteResult> ApplyBrightness(int percent, const std::vector<std::wstring>& monitorIds);
+    void RefreshMonitors(std::vector<MonitorInfo>& monitors, const std::atomic_bool* cancelled = nullptr);
+    std::vector<HardwareWriteResult> ApplyBrightness(int percent, const std::vector<std::wstring>& monitorIds,
+                                                   const std::atomic_bool* cancelled = nullptr);
     void ReleaseMonitors();
 
 private:

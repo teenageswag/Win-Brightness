@@ -36,6 +36,7 @@ App::~App() {
     RemoveTrayIcon();
     m_popup.reset();
     m_software.Reset();
+    m_controller.Cleanup();
 
     if (m_hMsgWnd) {
         DestroyWindow(m_hMsgWnd);

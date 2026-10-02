@@ -17,6 +17,7 @@ bool BrightnessController::Init(HWND notificationWindow) {
         }
         m_initialized = true;
         m_stopWorker = false;
+        m_cancelIo.store(false, std::memory_order_relaxed);
         m_refreshPending = true;
         m_notificationWindow = notificationWindow;
         m_retryCount = 0;
@@ -43,6 +44,7 @@ void BrightnessController::Cleanup() {
         }
         m_initialized = false;
         m_stopWorker = true;
+        m_cancelIo.store(true, std::memory_order_relaxed);
     }
 
     m_workerCv.notify_all();
@@ -142,7 +144,8 @@ void BrightnessController::RefreshMonitors() {
         return;
     }
     auto monitors = std::move(*enumerated);
-    m_hardware.RefreshMonitors(monitors);
+    m_hardware.RefreshMonitors(monitors, &m_cancelIo);
+    if (m_cancelIo.load(std::memory_order_relaxed)) return;
 
     {
         std::lock_guard lock(m_stateMutex);
@@ -249,7 +252,8 @@ void BrightnessController::ApplyBrightness(const ApplyState& state) {
         }
     }
     if (!removedIds.empty()) {
-        const auto restored = m_hardware.ApplyBrightness(kMaxBrightness, removedIds);
+        const auto restored = m_hardware.ApplyBrightness(kMaxBrightness, removedIds, &m_cancelIo);
+        if (m_cancelIo.load(std::memory_order_relaxed)) return;
         for (const auto& id : removedIds) {
             const bool any = std::ranges::any_of(restored, [&](const auto& result) {
                 return result.monitorId == id;
@@ -264,7 +268,8 @@ void BrightnessController::ApplyBrightness(const ApplyState& state) {
 
     if (state.mode == BrightnessMode::Hardware) {
         const auto written = m_hardware.ApplyBrightness(
-            state.enabled ? state.brightness : kMaxBrightness, targetIds);
+            state.enabled ? state.brightness : kMaxBrightness, targetIds, &m_cancelIo);
+        if (m_cancelIo.load(std::memory_order_relaxed)) return;
         for (const auto& result : written) {
             if (result.error == ERROR_SUCCESS &&
                 std::ranges::find(m_appliedMonitorIds, result.monitorId) == m_appliedMonitorIds.end()) {

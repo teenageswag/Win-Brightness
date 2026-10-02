@@ -12,10 +12,11 @@ HardwareBrightness::~HardwareBrightness() {
     ReleaseMonitors();
 }
 
-void HardwareBrightness::RefreshMonitors(std::vector<MonitorInfo>& monitors) {
+void HardwareBrightness::RefreshMonitors(std::vector<MonitorInfo>& monitors, const std::atomic_bool* cancelled) {
     std::vector<CachedDisplay> displays;
 
     for (MonitorInfo& monitor : monitors) {
+        if (cancelled && cancelled->load(std::memory_order_relaxed)) break;
         monitor.hardwareBrightness = false;
         monitor.hardwareError = ERROR_SUCCESS;
         monitor.hardwareStatus = HardwareStatus::Unknown;
@@ -43,6 +44,10 @@ void HardwareBrightness::RefreshMonitors(std::vector<MonitorInfo>& monitors) {
         CachedDisplay display;
         display.id = monitor.id;
         for (PHYSICAL_MONITOR& physical : physicalMonitors) {
+            if (cancelled && cancelled->load(std::memory_order_relaxed)) {
+                DestroyPhysicalMonitor(physical.hPhysicalMonitor);
+                continue;
+            }
             DWORD current = 0;
             DWORD maximum = 0;
             MC_VCP_CODE_TYPE type = MC_SET_PARAMETER;
@@ -78,7 +83,8 @@ void HardwareBrightness::RefreshMonitors(std::vector<MonitorInfo>& monitors) {
     m_displays = std::move(displays);
 }
 
-std::vector<HardwareWriteResult> HardwareBrightness::ApplyBrightness(int percent, const std::vector<std::wstring>& monitorIds) {
+std::vector<HardwareWriteResult> HardwareBrightness::ApplyBrightness(
+    int percent, const std::vector<std::wstring>& monitorIds, const std::atomic_bool* cancelled) {
     const int clamped = ClampBrightness(percent);
     const std::unordered_set<std::wstring> targets(monitorIds.begin(), monitorIds.end());
     std::vector<HardwareWriteResult> results;
@@ -86,12 +92,14 @@ std::vector<HardwareWriteResult> HardwareBrightness::ApplyBrightness(int percent
 
     std::lock_guard lock(m_mutex);
     for (const CachedDisplay& display : m_displays) {
+        if (cancelled && cancelled->load(std::memory_order_relaxed)) break;
         if (!targets.contains(display.id)) {
             continue;
         }
 
         found.insert(display.id);
         for (size_t i = 0; i < display.monitors.size(); ++i) {
+            if (cancelled && cancelled->load(std::memory_order_relaxed)) break;
             const CachedPhysicalMonitor& monitor = display.monitors[i];
             if (!monitor.monitor.hPhysicalMonitor) {
                 results.push_back({display.id, i, 0, monitor.discoveryError});
@@ -106,6 +114,7 @@ std::vector<HardwareWriteResult> HardwareBrightness::ApplyBrightness(int percent
     }
 
     for (const auto& id : targets) {
+        if (cancelled && cancelled->load(std::memory_order_relaxed)) break;
         if (!found.contains(id)) {
             results.push_back({id, 0, 0, ERROR_NOT_SUPPORTED});
         }

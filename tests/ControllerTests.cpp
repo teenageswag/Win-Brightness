@@ -77,6 +77,25 @@ int main() try {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     Check(enumerations == before + 4, "stop retrying after three retries");
     controller.Cleanup();
+
+    fake::probeFailureMask = 0;
+    fake::writeFailureMask = 0;
+    fake::writeDelayMs = 200;
+    controller.SetBrightnessMode(BrightnessMode::Hardware);
+    {
+        std::lock_guard lock(fake::writesMutex);
+        fake::writes.clear();
+    }
+    Check(controller.Init(window.handle), "restart controller for shutdown test");
+    WaitUntil([] {
+        std::lock_guard lock(fake::writesMutex);
+        return !fake::writes.empty();
+    }, "start first slow write");
+    controller.Cleanup();
+    {
+        std::lock_guard lock(fake::writesMutex);
+        Check(fake::writes.size() == 1, "stop before second physical monitor write");
+    }
     std::puts("ControllerTests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());

@@ -57,6 +57,7 @@ private:
     static std::vector<std::wstring> MonitorIds(const std::vector<MonitorInfo>& monitors);
 
     std::atomic<int> m_currentBrightness{kDefaultBrightness};
+    std::atomic_bool m_cancelIo{false};
     mutable std::mutex m_stateMutex;
     std::condition_variable m_workerCv;
     std::thread m_workerThread;
