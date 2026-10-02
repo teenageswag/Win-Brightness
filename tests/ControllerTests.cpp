@@ -79,6 +79,53 @@ int main() try {
     controller.Cleanup();
 
     fake::probeFailureMask = 0;
+    fake::writeFailureMask = 2;
+    fake::writeDelayMs = 0;
+    {
+        std::lock_guard lock(fake::writesMutex);
+        fake::writes.clear();
+    }
+    controller.SetBrightnessMode(BrightnessMode::Hardware);
+    Check(controller.Init(window.handle), "restart for partial restore test");
+    WaitUntil([&] {
+        const auto monitors = controller.GetMonitors();
+        return !monitors.empty() && monitors[0].hardwareStatus == HardwareStatus::Failed && monitors[0].hardwareActive;
+    }, "observe partially successful hardware write");
+    controller.SetBrightnessMode(BrightnessMode::Software);
+    WaitUntil([&] { return !controller.GetMonitors()[0].hardwareActive; },
+              "restore only physical endpoints that were actually modified");
+    {
+        std::lock_guard lock(fake::writesMutex);
+        Check(fake::writes.size() == 4 && fake::writes[2].value == 100,
+              "finish partial hardware restore before releasing ownership");
+    }
+    controller.Cleanup();
+
+    fake::probeFailureMask = 0;
+    fake::writeFailureMask = 0;
+    fake::writeDelayMs = 100;
+    controller.SetBrightnessMode(BrightnessMode::Hardware);
+    {
+        std::lock_guard lock(fake::writesMutex);
+        fake::writes.clear();
+    }
+    Check(controller.Init(window.handle), "restart controller for mode transition test");
+    WaitUntil([] {
+        std::lock_guard lock(fake::writesMutex);
+        return !fake::writes.empty();
+    }, "start in-flight hardware write");
+    Check(controller.GetMonitors()[0].hardwareActive, "mark hardware ownership before write completes");
+    controller.SetBrightnessMode(BrightnessMode::Software);
+    Check(controller.GetMonitors()[0].hardwareActive, "keep overlays deferred during in-flight hardware work");
+    WaitUntil([&] { return !controller.GetMonitors()[0].hardwareActive; }, "release ownership after hardware restore");
+    {
+        std::lock_guard lock(fake::writesMutex);
+        Check(fake::writes.size() == 4 && fake::writes[2].value == 100 && fake::writes[3].value == 100,
+              "restore both physical monitors before enabling software overlay");
+    }
+    controller.Cleanup();
+
+    fake::probeFailureMask = 0;
     fake::writeFailureMask = 0;
     fake::writeDelayMs = 200;
     controller.SetBrightnessMode(BrightnessMode::Hardware);

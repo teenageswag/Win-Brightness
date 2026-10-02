@@ -53,6 +53,8 @@ private:
     void ApplyBrightness(const ApplyState& state);
     void PublishWriteResults(const std::vector<HardwareWriteResult>& results);
     void PublishWorkerError(DWORD error);
+    void PublishHardwareActivity();
+    void UpdateAppliedMonitorIds();
     void ScheduleRetryLocked();
     static std::vector<MonitorInfo> ResolveTargets(const ApplyState& state);
     static std::vector<std::wstring> MonitorIds(const std::vector<MonitorInfo>& monitors);
@@ -76,7 +78,12 @@ private:
     MonitorSelection m_selection;
     std::vector<MonitorInfo> m_monitors;
 
-    // IDs with at least one successful write, retained until restoration succeeds.
+    struct AppliedPhysicalMonitor {
+        std::wstring id;
+        size_t index = 0;
+    };
+    std::vector<AppliedPhysicalMonitor> m_appliedPhysicalMonitors;
+    // IDs with at least one successfully modified physical endpoint.
     std::vector<std::wstring> m_appliedMonitorIds;
 
     HardwareBrightness m_hardware;

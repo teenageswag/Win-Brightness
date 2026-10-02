@@ -254,7 +254,7 @@ void App::ApplySoftwareBrightness() {
 
     auto monitors = m_controller.GetMonitors();
     std::erase_if(monitors, [this](const MonitorInfo& monitor) {
-        return !m_state.monitors.Contains(monitor.id);
+        return !m_state.monitors.Contains(monitor.id) || monitor.hardwareActive;
     });
     m_software.ApplyBrightness(m_state.brightness, monitors);
     // Keep the controls above the newly positioned topmost overlays.
@@ -433,6 +433,7 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
         return 0;
 
     case BrightnessController::kHardwareStatusMessage:
+        ApplySoftwareBrightness();
         SyncPopup();
         return 0;
 

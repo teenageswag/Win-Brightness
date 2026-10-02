@@ -40,6 +40,7 @@ struct MonitorInfo {
     bool hardwareBrightness = false;
     DWORD hardwareError = ERROR_SUCCESS;
     HardwareStatus hardwareStatus = HardwareStatus::Unknown;
+    bool hardwareActive = false;
 };
 
 struct MonitorSelection {
