@@ -6,7 +6,7 @@
 
 #include "BrightnessTypes.h"
 #include <atomic>
-#include <mutex>
+#include <memory>
 #include <physicalmonitorenumerationapi.h>
 #include <string>
 #include <vector>
@@ -30,11 +30,16 @@ public:
     void RefreshMonitors(std::vector<MonitorInfo>& monitors, const std::atomic_bool* cancelled = nullptr);
     std::vector<HardwareWriteResult> ApplyBrightness(int percent, const std::vector<std::wstring>& monitorIds,
                                                    const std::atomic_bool* cancelled = nullptr);
-    void ReleaseMonitors();
+    void ReleaseMonitors() noexcept;
 
 private:
+    struct PhysicalMonitorDeleter {
+        void operator()(void* handle) const noexcept;
+    };
+    using UniquePhysicalMonitor = std::unique_ptr<void, PhysicalMonitorDeleter>;
+
     struct CachedPhysicalMonitor {
-        PHYSICAL_MONITOR monitor{};
+        UniquePhysicalMonitor handle;
         DWORD maxBrightness = 100;
         DWORD discoveryError = ERROR_SUCCESS;
     };
@@ -44,8 +49,6 @@ private:
         std::vector<CachedPhysicalMonitor> monitors;
     };
 
-    mutable std::mutex m_mutex;
+    // Owned by the controller's I/O thread; destruction follows its join.
     std::vector<CachedDisplay> m_displays;
-
-    void ReleaseMonitorsLocked();
 };

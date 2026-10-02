@@ -19,6 +19,7 @@ inline std::atomic<DWORD> probeThread{0};
 inline std::mutex writesMutex;
 struct Write { uintptr_t handle; DWORD value; };
 inline std::vector<Write> writes;
+inline void (*afterAcquisition)() = nullptr;
 inline bool Fails(unsigned mask, HANDLE handle) {
     return (mask & (1u << (reinterpret_cast<uintptr_t>(handle) - 1))) != 0;
 }
@@ -35,6 +36,7 @@ BOOL WINAPI GetPhysicalMonitorsFromHMONITOR(HMONITOR, DWORD count, LPPHYSICAL_MO
         monitors[i] = {};
         monitors[i].hPhysicalMonitor = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(i + 1));
     }
+    if (fake::afterAcquisition) fake::afterAcquisition();
     return TRUE;
 }
 BOOL WINAPI GetVCPFeatureAndVCPFeatureReply(HANDLE handle, BYTE, LPMC_VCP_CODE_TYPE type,

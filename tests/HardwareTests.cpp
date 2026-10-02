@@ -2,6 +2,19 @@
 #include "FakeMonitorApi.h"
 #include <cstdio>
 #include <stdexcept>
+#include <cstdlib>
+#include <new>
+#include <utility>
+
+namespace { bool failNextAllocation = false; }
+
+void* operator new(std::size_t size) {
+    if (std::exchange(failNextAllocation, false)) throw std::bad_alloc();
+    if (void* memory = std::malloc(size ? size : 1)) return memory;
+    throw std::bad_alloc();
+}
+void operator delete(void* memory) noexcept { std::free(memory); }
+void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
 
 void Check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
@@ -45,6 +58,28 @@ int main() try {
     hardware.RefreshMonitors(monitors);
     Check(monitors[0].hardwareStatus == HardwareStatus::Unsupported && !monitors[0].hardwareBrightness,
           "recognize explicitly unsupported brightness");
+
+    fake::probeFailureMask = 0;
+    const unsigned beforeFailure = fake::destroyed;
+    fake::afterAcquisition = [] { failNextAllocation = true; };
+    bool failed = false;
+    try {
+        hardware.RefreshMonitors(monitors);
+    } catch (const std::bad_alloc&) {
+        failed = true;
+    }
+    fake::afterAcquisition = nullptr;
+    Check(failed && fake::destroyed == beforeFailure + 2,
+          "release every acquired handle when a cache allocation fails");
+
+    hardware.RefreshMonitors(monitors);
+    const unsigned beforeRelease = fake::destroyed;
+    failNextAllocation = true;
+    hardware.ReleaseMonitors();
+    const bool noAllocation = failNextAllocation;
+    failNextAllocation = false;
+    Check(noAllocation && fake::destroyed == beforeRelease + 2,
+          "release physical handles without allocating memory");
     std::puts("HardwareTests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());

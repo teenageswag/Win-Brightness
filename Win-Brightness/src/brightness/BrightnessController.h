@@ -52,6 +52,7 @@ private:
     void WorkerThreadProc();
     void ApplyBrightness(const ApplyState& state);
     void PublishWriteResults(const std::vector<HardwareWriteResult>& results);
+    void PublishWorkerError(DWORD error);
     void ScheduleRetryLocked();
     static std::vector<MonitorInfo> ResolveTargets(const ApplyState& state);
     static std::vector<std::wstring> MonitorIds(const std::vector<MonitorInfo>& monitors);

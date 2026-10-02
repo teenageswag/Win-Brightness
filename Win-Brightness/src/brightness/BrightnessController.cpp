@@ -221,20 +221,38 @@ void BrightnessController::WorkerThreadProc() {
             if (m_refreshPending) {
                 m_refreshPending = false;
                 lock.unlock();
-                RefreshMonitors();
+                try {
+                    RefreshMonitors();
+                } catch (const std::bad_alloc&) {
+                    PublishWorkerError(ERROR_NOT_ENOUGH_MEMORY);
+                } catch (...) {
+                    PublishWorkerError(ERROR_GEN_FAILURE);
+                }
                 continue;
             }
 
             m_applyPending = false;
             if (m_catalogError != ERROR_SUCCESS) continue;
-            state.brightness = m_currentBrightness.load(std::memory_order_relaxed);
-            state.enabled = m_enabled;
-            state.mode = m_mode;
-            state.selection = m_selection;
-            state.monitors = m_monitors;
+            try {
+                state.brightness = m_currentBrightness.load(std::memory_order_relaxed);
+                state.enabled = m_enabled;
+                state.mode = m_mode;
+                state.selection = m_selection;
+                state.monitors = m_monitors;
+            } catch (const std::bad_alloc&) {
+                lock.unlock();
+                PublishWorkerError(ERROR_NOT_ENOUGH_MEMORY);
+                continue;
+            }
         }
 
-        ApplyBrightness(state);
+        try {
+            ApplyBrightness(state);
+        } catch (const std::bad_alloc&) {
+            PublishWorkerError(ERROR_NOT_ENOUGH_MEMORY);
+        } catch (...) {
+            PublishWorkerError(ERROR_GEN_FAILURE);
+        }
     }
 
     m_hardware.ReleaseMonitors();
@@ -306,6 +324,15 @@ void BrightnessController::PublishWriteResults(const std::vector<HardwareWriteRe
         }
     }
     if (changed) PostMessageW(m_notificationWindow, kHardwareStatusMessage, 0, 0);
+}
+
+void BrightnessController::PublishWorkerError(DWORD error) {
+    {
+        std::lock_guard lock(m_stateMutex);
+        m_catalogError = error;
+        ScheduleRetryLocked();
+    }
+    PostMessageW(m_notificationWindow, kMonitorsChangedMessage, 0, 0);
 }
 
 std::vector<MonitorInfo> BrightnessController::ResolveTargets(const ApplyState& state) {
