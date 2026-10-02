@@ -356,13 +356,20 @@ bool PopupView::Register() {
     WNDCLASSEXW windowClass{sizeof(windowClass)};
     windowClass.lpfnWndProc = WindowProc; windowClass.hInstance = m_impl->instance;
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW); windowClass.lpszClassName = kWindowClass;
-    return RegisterClassExW(&windowClass) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+    if (RegisterClassExW(&windowClass)) return true;
+    const DWORD error = GetLastError();
+    if (error == ERROR_CLASS_ALREADY_EXISTS) return true;
+    m_impl->renderError = error ? HRESULT_FROM_WIN32(error) : E_FAIL;
+    return false;
 }
 bool PopupView::Create() {
     auto& r = *m_impl;
     HWND window = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP,
         kWindowClass, L"trenches", WS_POPUP, 0, 0, 376, 80, nullptr, nullptr, r.instance, this);
-    if (!window) return false;
+    if (!window) {
+        const DWORD error = GetLastError(); r.renderError = error ? HRESULT_FROM_WIN32(error) : E_FAIL;
+        return false;
+    }
     r.MeasureMonitor(true); r.Targets(); r.Position();
     const HRESULT hr = r.InitializeRenderer();
     if (FAILED(hr)) { r.renderError = hr; return false; }

@@ -106,7 +106,7 @@ bool App::Init() {
     if (!m_popup->Register() || !m_popup->Create()) {
         const HRESULT error = m_popup->LastRenderError();
         wchar_t message[180]{};
-        swprintf_s(message, L"Unable to create the brightness interface. Graphics error 0x%08lX.", static_cast<unsigned long>(error));
+        swprintf_s(message, L"Unable to create the brightness interface. Error 0x%08lX.", static_cast<unsigned long>(error));
         MessageBoxW(nullptr, message, L"trenches", MB_OK | MB_ICONERROR);
         m_popup.reset();
         return false;
