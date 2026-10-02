@@ -7,6 +7,7 @@
 #include <cwchar>
 #include <commctrl.h>
 #include <windowsx.h>
+#include <array>
 
 #pragma comment(lib, "comctl32.lib")
 
@@ -15,11 +16,22 @@ constexpr UINT_PTR kBrightnessTimer = 1;
 constexpr UINT_PTR kGraphicsTimer = 2;
 constexpr UINT kBrightnessInterval = 70;
 constexpr wchar_t kWindowClass[] = L"TrenchesDynamicIsland";
+struct KeyboardShortcut { int id; UINT key; UINT command; UINT modifiers; };
+constexpr UINT kControlModifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
+constexpr std::array<KeyboardShortcut, 13> kShortcuts{{
+    {21, VK_LEFT, VK_LEFT, kControlModifiers}, {22, VK_RIGHT, VK_RIGHT, kControlModifiers},
+    {23, VK_UP, VK_UP, kControlModifiers}, {24, VK_DOWN, VK_DOWN, kControlModifiers},
+    {25, VK_HOME, VK_HOME, kControlModifiers}, {26, VK_END, VK_END, kControlModifiers},
+    {27, VK_PRIOR, VK_PRIOR, kControlModifiers}, {28, VK_NEXT, VK_NEXT, kControlModifiers},
+    {29, 'N', VK_TAB, kControlModifiers}, {30, VK_RETURN, VK_RETURN, kControlModifiers},
+    {31, 'E', 'E', kControlModifiers}, {32, VK_ESCAPE, VK_ESCAPE, kControlModifiers},
+    {33, 'N', VK_TAB, kControlModifiers | MOD_SHIFT}
+}};
 }
 
 struct PopupView::Impl {
     HINSTANCE instance;
-    HWND window = nullptr, tooltip = nullptr, previousForeground = nullptr;
+    HWND window = nullptr, tooltip = nullptr;
     PopupActions actions;
     PopupState state;
     island::Preferences preferences;
@@ -37,6 +49,8 @@ struct PopupView::Impl {
     float scroll = 0, maximumHeight = 449, maximumWidth = 420;
     UINT dpi = 96, graphicsRetries = 0;
     HRESULT renderError = S_OK;
+    std::array<bool, kShortcuts.size()> shortcuts{};
+    DWORD shortcutError = ERROR_SUCCESS;
     LARGE_INTEGER frequency{}, lastFrame{};
 
     Impl(HINSTANCE module, PopupActions callbacks) : instance(module), actions(std::move(callbacks)) {
@@ -46,11 +60,28 @@ struct PopupView::Impl {
     ~Impl() {
         if (window) {
             KillTimer(window, kBrightnessTimer); KillTimer(window, kGraphicsTimer);
+            UnregisterShortcuts();
             if (GetCapture() == window) ReleaseCapture();
             clock.Stop(); renderer.reset(); DestroyWindow(window);
         }
     }
     bool Animate() const { return preferences.animations && !reducedMotion; }
+    void UnregisterShortcuts() {
+        for (size_t i = 0; i < kShortcuts.size(); ++i) {
+            if (shortcuts[i]) UnregisterHotKey(window, kShortcuts[i].id);
+            shortcuts[i] = false;
+        }
+    }
+    void RegisterShortcuts() {
+        UnregisterShortcuts(); shortcutError = ERROR_SUCCESS;
+        for (size_t i = 0; i < kShortcuts.size(); ++i) {
+            shortcuts[i] = RegisterHotKey(window, kShortcuts[i].id, kShortcuts[i].modifiers, kShortcuts[i].key) != FALSE;
+            if (!shortcuts[i] && shortcutError == ERROR_SUCCESS) {
+                shortcutError = GetLastError();
+                if (!shortcutError) shortcutError = ERROR_GEN_FAILURE;
+            }
+        }
+    }
     size_t Primary() const {
         const auto primary = std::ranges::find_if(state.monitors, [](const auto& monitor) { return monitor.primary; });
         return primary == state.monitors.end() ? 0 : static_cast<size_t>(primary - state.monitors.begin());
@@ -167,6 +198,8 @@ struct PopupView::Impl {
         case island::Control::None: break;
         }
         if (FAILED(renderError)) name += L" Graphics unavailable.";
+        if (keyboardMode && shortcutError) name += L" Some keyboard shortcuts are unavailable. Windows error " +
+            std::to_wstring(shortcutError) + L".";
         SetWindowTextW(window, name.c_str());
         if (IsWindowVisible(window)) NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, window, OBJID_WINDOW, CHILDID_SELF);
     }
@@ -396,16 +429,15 @@ void PopupView::Toggle(POINT monitorPoint, bool keyboardInvoked) {
     r.hiding = false; r.visibility.Target(1.0); r.lastFrame = {};
     r.keyboardMode = keyboardInvoked; r.focus = {island::Control::Slider, r.Primary()};
     ShowWindow(r.window, SW_SHOWNOACTIVATE);
-    if (keyboardInvoked) {
-        // Only explicit keyboard control requests activation. Mouse/tray opening
-        // and every resize preserve the foreground application.
-        r.previousForeground = GetForegroundWindow(); SetForegroundWindow(r.window); SetFocus(r.window);
-    }
+    // Keyboard navigation uses temporary Ctrl+Alt shortcuts, rather than taking
+    // focus or intercepting the foreground application's unmodified key events.
+    if (keyboardInvoked) r.RegisterShortcuts();
     r.AccessibleName(); r.RequestFrame();
 }
 void PopupView::Hide(bool animated) {
     auto& r = *m_impl;
     if (!r.window) return;
+    r.UnregisterShortcuts();
     r.FinishDrag(); r.Tooltip(false);
     if (animated && r.Animate() && IsVisible() && r.renderer) {
         r.hiding = true; r.visibility.Target(0.0); r.Expand(false);
@@ -413,11 +445,9 @@ void PopupView::Hide(bool animated) {
         r.hiding = false; r.visibility.Snap(0); r.expanded = false;
         r.width.Snap(std::min(island::kCompactWidth, r.maximumWidth));
         r.height.Snap(island::kCompactHeight); r.expansion.Snap(0);
-        const bool restore = GetForegroundWindow() == r.window && IsWindow(r.previousForeground);
         r.keyboardMode = false;
         ShowWindow(r.window, SW_HIDE); r.dirty = false; r.lastFrame = {};
         KillTimer(r.window, kGraphicsTimer);
-        if (restore) SetForegroundWindow(r.previousForeground);
     }
 }
 void PopupView::SetState(PopupState state) {
@@ -606,6 +636,19 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
             else if (wParam == VK_RIGHT) r.Activate({island::Control::Hardware});
         } else if (wParam == VK_UP || wParam == VK_DOWN) r.MoveFocus(wParam == VK_UP);
         return 0;
+    case WM_HOTKEY:
+        if (IsVisible() && !r.hiding) {
+            const auto found = std::ranges::find_if(kShortcuts, [wParam](const auto& shortcut) {
+                return static_cast<WPARAM>(shortcut.id) == wParam;
+            });
+            if (found != kShortcuts.end()) {
+                if (found->command == VK_TAB) {
+                    r.keyboardMode = true; r.MoveFocus((found->modifiers & MOD_SHIFT) != 0); return 0;
+                }
+                return HandleMessage(window, WM_KEYDOWN, found->command, 0);
+            }
+        }
+        return 0;
     case WM_ACTIVATE:
         if (LOWORD(wParam) == WA_INACTIVE && r.keyboardMode && IsVisible()) Hide(false);
         return 0;
@@ -617,6 +660,7 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
         }
         return 0;
     case WM_NCDESTROY:
+        r.UnregisterShortcuts();
         r.clock.Stop(); r.renderer.reset(); r.window = nullptr; r.tooltip = nullptr;
         SetWindowLongPtrW(window, GWLP_USERDATA, 0); break;
     }

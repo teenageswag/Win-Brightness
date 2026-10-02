@@ -142,6 +142,15 @@ int main() try {
     Check(popup.IsVisible(), "closing animation can be interrupted");
     popup.Hide();
     Check(!popup.IsVisible() && popup.FrameWaitHandle() == nullptr, "hidden popup has no frames");
+    const HWND keyboardForeground = GetForegroundWindow();
+    popup.Toggle({0, 0}, true); Settle(popup);
+    Check(GetForegroundWindow() == keyboardForeground, "hotkey opening also preserves foreground focus");
+    popup.HandleMessage(popup.GetHWnd(), WM_HOTKEY, 22, MAKELPARAM(MOD_CONTROL | MOD_ALT, VK_RIGHT));
+    popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
+    Check(committed == 73, "temporary shortcut adjusts brightness without focus");
+    popup.Hide();
+    Check(RegisterHotKey(popup.GetHWnd(), 500, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_RIGHT), "closing releases temporary shortcut");
+    UnregisterHotKey(popup.GetHWnd(), 500);
     std::puts("PopupTests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what()); return 1;
