@@ -28,6 +28,24 @@ namespace {
             buffer.resize((std::min)(buffer.size() * 2, size_t{32768}));
         }
     }
+
+    std::expected<std::wstring, LSTATUS> StartupCommand() {
+        auto path = ExecutablePath();
+        if (!path) return std::unexpected(path.error());
+        std::wstring command = L"\"" + *path + L"\"";
+        // Run/RunOnce command lines are limited to 260 characters even when
+        // GetModuleFileNameW and the filesystem support a longer path.
+        if (command.size() <= MAX_PATH) return command;
+
+        const DWORD required = GetShortPathNameW(path->c_str(), nullptr, 0);
+        if (required == 0 || required > 32768) return std::unexpected(ERROR_FILENAME_EXCED_RANGE);
+        std::vector<wchar_t> shortPath(required);
+        const DWORD length = GetShortPathNameW(path->c_str(), shortPath.data(), required);
+        if (length == 0 || length >= required) return std::unexpected(ERROR_FILENAME_EXCED_RANGE);
+        command = L"\"" + std::wstring(shortPath.data(), length) + L"\"";
+        if (command.size() > MAX_PATH) return std::unexpected(ERROR_FILENAME_EXCED_RANGE);
+        return command;
+    }
 } // namespace
 
 bool SettingsStore::TryReadDword(const wchar_t* valueName, DWORD& value) const {
@@ -168,10 +186,8 @@ bool SettingsStore::IsAutostartEnabled() const try {
         if (copied == 0 || copied > required) return false;
         value = std::move(expanded);
     }
-    const auto exePath = ExecutablePath();
-    if (!exePath) return false;
-    const std::wstring expectedCommand = L"\"" + *exePath + L"\"";
-    return _wcsicmp(value.data(), expectedCommand.c_str()) == 0;
+    const auto expectedCommand = StartupCommand();
+    return expectedCommand && _wcsicmp(value.data(), expectedCommand->c_str()) == 0;
 } catch (const std::bad_alloc&) {
     return false;
 }
@@ -187,12 +203,11 @@ SettingsResult SettingsStore::SetAutostartEnabled(bool enabled) const try {
         return ResultFromStatus(deleted == ERROR_FILE_NOT_FOUND ? ERROR_SUCCESS : deleted);
     }
 
-    const auto exePath = ExecutablePath();
-    if (!exePath) return std::unexpected(exePath.error());
-    const std::wstring command = L"\"" + *exePath + L"\"";
+    const auto command = StartupCommand();
+    if (!command) return std::unexpected(command.error());
     return ResultFromStatus(RegSetValueExW(
-        key.Get(), kRunValue, 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()),
-        static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t))));
+        key.Get(), kRunValue, 0, REG_SZ, reinterpret_cast<const BYTE*>(command->c_str()),
+        static_cast<DWORD>((command->size() + 1) * sizeof(wchar_t))));
 } catch (const std::bad_alloc&) {
     return std::unexpected(ERROR_NOT_ENOUGH_MEMORY);
 }

@@ -844,7 +844,9 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
                       layout.autostart.right - ScaleByDpi(48, dpi), layout.autostart.top + ScaleByDpi(26, dpi)},
                      palette.text);
             std::wstring persistenceDetail = L"Launch quietly in the notification area";
-            if (m_state.autostartError != ERROR_SUCCESS) {
+            if (m_state.autostartError == ERROR_FILENAME_EXCED_RANGE) {
+                persistenceDetail = L"Use a shorter app path for Windows startup";
+            } else if (m_state.autostartError != ERROR_SUCCESS) {
                 persistenceDetail = L"Windows startup update failed (" + std::to_wstring(m_state.autostartError) + L")";
             } else if (m_state.settingsError != ERROR_SUCCESS) {
                 persistenceDetail = L"Settings could not be saved (" + std::to_wstring(m_state.settingsError) + L")";

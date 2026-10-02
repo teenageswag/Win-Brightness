@@ -282,9 +282,13 @@ void App::ReportPersistenceResult(const SettingsResult& result, bool autostart) 
         icon.uFlags = NIF_INFO;
         icon.dwInfoFlags = NIIF_ERROR;
         swprintf_s(icon.szInfoTitle, L"trenches");
-        swprintf_s(icon.szInfo, autostart
-            ? L"Unable to update Windows startup. Windows error %ld."
-            : L"Unable to save settings. Windows error %ld.", error);
+        if (autostart && error == ERROR_FILENAME_EXCED_RANGE) {
+            swprintf_s(icon.szInfo, L"Windows startup cannot use this long path. Move trenches to a shorter path.");
+        } else {
+            swprintf_s(icon.szInfo, autostart
+                ? L"Unable to update Windows startup. Windows error %ld."
+                : L"Unable to save settings. Windows error %ld.", error);
+        }
         Shell_NotifyIconW(NIM_MODIFY, &icon);
     }
 }
