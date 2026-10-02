@@ -42,6 +42,35 @@ private:
     std::wstring m_path;
     RegistryKey m_root;
 };
+
+class DenySettingsWrites {
+public:
+    DenySettingsWrites() {
+        Check(RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\trenches\\Settings", 0,
+                            READ_CONTROL | WRITE_DAC, m_key.Put()) == ERROR_SUCCESS, "open test key ACL");
+        DWORD bytes = 0;
+        Check(RegGetKeySecurity(m_key.Get(), DACL_SECURITY_INFORMATION, nullptr, &bytes)
+              == ERROR_INSUFFICIENT_BUFFER, "size test ACL");
+        m_original.resize(bytes);
+        Check(RegGetKeySecurity(m_key.Get(), DACL_SECURITY_INFORMATION,
+              reinterpret_cast<PSECURITY_DESCRIPTOR>(m_original.data()), &bytes) == ERROR_SUCCESS,
+              "save test ACL");
+        ACL empty{};
+        SECURITY_DESCRIPTOR descriptor{};
+        Check(InitializeAcl(&empty, sizeof(empty), ACL_REVISION) &&
+              InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION) &&
+              SetSecurityDescriptorDacl(&descriptor, TRUE, &empty, FALSE), "build empty test ACL");
+        Check(RegSetKeySecurity(m_key.Get(), DACL_SECURITY_INFORMATION, &descriptor) == ERROR_SUCCESS,
+              "deny writes in disposable key");
+    }
+    ~DenySettingsWrites() {
+        RegSetKeySecurity(m_key.Get(), DACL_SECURITY_INFORMATION,
+                          reinterpret_cast<PSECURITY_DESCRIPTOR>(m_original.data()));
+    }
+private:
+    RegistryKey m_key;
+    std::vector<BYTE> m_original;
+};
 }
 
 int main() try {
@@ -72,6 +101,25 @@ int main() try {
     registry.Write(L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", L"trenches",
                    REG_SZ, full.data(), static_cast<DWORD>(full.size() * sizeof(wchar_t)));
     Check(!store.IsAutostartEnabled(), "reject full unterminated autostart command");
+
+    AppSettings settings;
+    settings.brightness = 37;
+    settings.mode = BrightnessMode::Hardware;
+    settings.monitors = {false, {L"first", L"second"}};
+    Check(store.Save(settings).has_value(), "report successful settings save");
+    const auto loaded = store.Load();
+    Check(loaded.brightness == 37 && loaded.mode == BrightnessMode::Hardware &&
+          loaded.monitors.ids == settings.monitors.ids, "round-trip settings");
+    {
+        DenySettingsWrites denied;
+        const auto result = store.Save(settings);
+        Check(!result && result.error() == ERROR_ACCESS_DENIED, "propagate registry access denial");
+    }
+    Check(store.SetAutostartEnabled(true).has_value() && store.IsAutostartEnabled(),
+          "enable and detect quoted startup command");
+    Check(store.SetAutostartEnabled(false).has_value() && !store.IsAutostartEnabled(),
+          "remove startup command");
+    Check(store.SetAutostartEnabled(false).has_value(), "deleting absent startup is successful");
 
     std::puts("SettingsTests passed");
 } catch (const std::exception& error) {

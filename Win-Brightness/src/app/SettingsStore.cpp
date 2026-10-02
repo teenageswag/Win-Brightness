@@ -12,6 +12,22 @@ namespace {
     constexpr const wchar_t* kMonitorIdsValue = L"MonitorIds";
     constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
     constexpr const wchar_t* kRunValue = L"trenches";
+
+    SettingsResult ResultFromStatus(LSTATUS status) {
+        if (status != ERROR_SUCCESS) return std::unexpected(status);
+        return {};
+    }
+
+    std::expected<std::wstring, LSTATUS> ExecutablePath() {
+        std::vector<wchar_t> buffer(MAX_PATH);
+        for (;;) {
+            const DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+            if (length == 0) return std::unexpected(static_cast<LSTATUS>(GetLastError()));
+            if (length < buffer.size()) return std::wstring(buffer.data(), length);
+            if (buffer.size() >= 32768) return std::unexpected(ERROR_FILENAME_EXCED_RANGE);
+            buffer.resize((std::min)(buffer.size() * 2, size_t{32768}));
+        }
+    }
 } // namespace
 
 bool SettingsStore::TryReadDword(const wchar_t* valueName, DWORD& value) const {
@@ -21,14 +37,14 @@ bool SettingsStore::TryReadDword(const wchar_t* valueName, DWORD& value) const {
            type == REG_DWORD;
 }
 
-bool SettingsStore::WriteDword(const wchar_t* valueName, DWORD value) const {
+SettingsResult SettingsStore::WriteDword(const wchar_t* valueName, DWORD value) const {
     RegistryKey key;
-    if (RegCreateKeyEx(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, key.Put(), nullptr) != ERROR_SUCCESS) {
-        return false;
-    }
+    const LSTATUS opened = RegCreateKeyExW(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0,
+                                          KEY_SET_VALUE, nullptr, key.Put(), nullptr);
+    if (opened != ERROR_SUCCESS) return std::unexpected(opened);
 
-    return RegSetValueEx(
-               key.Get(), valueName, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value)) == ERROR_SUCCESS;
+    return ResultFromStatus(RegSetValueExW(
+        key.Get(), valueName, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value)));
 }
 
 std::vector<std::wstring> SettingsStore::ReadStringList(const wchar_t* valueName) const {
@@ -58,11 +74,11 @@ std::vector<std::wstring> SettingsStore::ReadStringList(const wchar_t* valueName
     return values;
 }
 
-bool SettingsStore::WriteStringList(const wchar_t* valueName, const std::vector<std::wstring>& values) const {
+SettingsResult SettingsStore::WriteStringList(const wchar_t* valueName, const std::vector<std::wstring>& values) const {
     RegistryKey key;
-    if (RegCreateKeyEx(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, key.Put(), nullptr) != ERROR_SUCCESS) {
-        return false;
-    }
+    const LSTATUS opened = RegCreateKeyExW(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0,
+                                          KEY_SET_VALUE, nullptr, key.Put(), nullptr);
+    if (opened != ERROR_SUCCESS) return std::unexpected(opened);
 
     std::vector<wchar_t> buffer;
     for (const std::wstring& value : values) {
@@ -74,9 +90,10 @@ bool SettingsStore::WriteStringList(const wchar_t* valueName, const std::vector<
         buffer.push_back(L'\0');
     }
 
-    return RegSetValueEx(
+    if (buffer.size() > MAXDWORD / sizeof(wchar_t)) return std::unexpected(ERROR_INVALID_DATA);
+    return ResultFromStatus(RegSetValueExW(
                key.Get(), valueName, 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(buffer.data()),
-               static_cast<DWORD>(buffer.size() * sizeof(wchar_t))) == ERROR_SUCCESS;
+               static_cast<DWORD>(buffer.size() * sizeof(wchar_t))));
 }
 
 AppSettings SettingsStore::Load() const {
@@ -105,62 +122,68 @@ AppSettings SettingsStore::Load() const {
     return settings;
 }
 
-void SettingsStore::Save(const AppSettings& settings) const {
-    WriteDword(kBrightnessValue, static_cast<DWORD>(ClampBrightness(settings.brightness)));
-    WriteDword(kModeValue, static_cast<DWORD>(settings.mode));
-    WriteDword(kEnabledValue, settings.enabled ? 1u : 0u);
-    WriteDword(kAllMonitorsValue, settings.monitors.all ? 1u : 0u);
-    WriteStringList(kMonitorIdsValue, settings.monitors.ids);
+SettingsResult SettingsStore::Save(const AppSettings& settings) const try {
+    if (auto result = WriteDword(kBrightnessValue, static_cast<DWORD>(ClampBrightness(settings.brightness))); !result) return result;
+    if (auto result = WriteDword(kModeValue, static_cast<DWORD>(settings.mode)); !result) return result;
+    if (auto result = WriteDword(kEnabledValue, settings.enabled ? 1u : 0u); !result) return result;
+    if (auto result = WriteDword(kAllMonitorsValue, settings.monitors.all ? 1u : 0u); !result) return result;
+    return WriteStringList(kMonitorIdsValue, settings.monitors.ids);
+} catch (const std::bad_alloc&) {
+    return std::unexpected(ERROR_NOT_ENOUGH_MEMORY);
 }
 
-bool SettingsStore::IsAutostartEnabled() const {
+bool SettingsStore::IsAutostartEnabled() const try {
     RegistryKey key;
     if (RegOpenKeyEx(HKEY_CURRENT_USER, kRunKey, 0, KEY_READ, key.Put()) != ERROR_SUCCESS) {
         return false;
     }
 
-    wchar_t value[MAX_PATH * 2] = {};
+    constexpr DWORD flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND | RRF_ZEROONFAILURE;
     DWORD type = 0;
-    DWORD size = sizeof(value);
-    const LSTATUS result = RegGetValueW(
-        key.Get(), nullptr, kRunValue,
-        RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND | RRF_ZEROONFAILURE,
-        &type, value, &size);
-    if (result != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ)) {
+    DWORD size = 0;
+    if (RegGetValueW(key.Get(), nullptr, kRunValue, flags, &type, nullptr, &size) != ERROR_SUCCESS ||
+        size % sizeof(wchar_t) != 0 || size > 64 * 1024) {
         return false;
     }
-
-    wchar_t exePath[MAX_PATH] = {};
-    const DWORD pathLength = GetModuleFileName(nullptr, exePath, MAX_PATH);
-    if (pathLength == 0 || pathLength >= MAX_PATH) {
+    std::vector<wchar_t> value(size / sizeof(wchar_t) + 1, L'\0');
+    size = static_cast<DWORD>(value.size() * sizeof(wchar_t));
+    if (RegGetValueW(key.Get(), nullptr, kRunValue, flags, &type, value.data(), &size) != ERROR_SUCCESS ||
+        size % sizeof(wchar_t) != 0) {
         return false;
     }
-
-    wchar_t expectedCommand[MAX_PATH + 4] = {};
-    swprintf_s(expectedCommand, L"\"%s\"", exePath);
-    return _wcsicmp(value, expectedCommand) == 0;
+    if (type == REG_EXPAND_SZ) {
+        const DWORD required = ExpandEnvironmentStringsW(value.data(), nullptr, 0);
+        if (required == 0 || required > 32768) return false;
+        std::vector<wchar_t> expanded(required);
+        const DWORD copied = ExpandEnvironmentStringsW(value.data(), expanded.data(), required);
+        if (copied == 0 || copied > required) return false;
+        value = std::move(expanded);
+    }
+    const auto exePath = ExecutablePath();
+    if (!exePath) return false;
+    const std::wstring expectedCommand = L"\"" + *exePath + L"\"";
+    return _wcsicmp(value.data(), expectedCommand.c_str()) == 0;
+} catch (const std::bad_alloc&) {
+    return false;
 }
 
-void SettingsStore::SetAutostartEnabled(bool enabled) const {
+SettingsResult SettingsStore::SetAutostartEnabled(bool enabled) const try {
     RegistryKey key;
-    if (RegCreateKeyEx(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, key.Put(), nullptr) != ERROR_SUCCESS) {
-        return;
-    }
+    const LSTATUS opened = RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0,
+                                          KEY_SET_VALUE, nullptr, key.Put(), nullptr);
+    if (opened != ERROR_SUCCESS) return std::unexpected(opened);
 
     if (!enabled) {
-        RegDeleteValue(key.Get(), kRunValue);
-        return;
+        const LSTATUS deleted = RegDeleteValueW(key.Get(), kRunValue);
+        return ResultFromStatus(deleted == ERROR_FILE_NOT_FOUND ? ERROR_SUCCESS : deleted);
     }
 
-    wchar_t exePath[MAX_PATH] = {};
-    const DWORD pathLength = GetModuleFileName(nullptr, exePath, MAX_PATH);
-    if (pathLength == 0 || pathLength >= MAX_PATH) {
-        return;
-    }
-
-    wchar_t command[MAX_PATH + 4] = {};
-    swprintf_s(command, L"\"%s\"", exePath);
-    RegSetValueEx(
-        key.Get(), kRunValue, 0, REG_SZ, reinterpret_cast<const BYTE*>(command),
-        static_cast<DWORD>((wcslen(command) + 1) * sizeof(wchar_t)));
+    const auto exePath = ExecutablePath();
+    if (!exePath) return std::unexpected(exePath.error());
+    const std::wstring command = L"\"" + *exePath + L"\"";
+    return ResultFromStatus(RegSetValueExW(
+        key.Get(), kRunValue, 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()),
+        static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t))));
+} catch (const std::bad_alloc&) {
+    return std::unexpected(ERROR_NOT_ENOUGH_MEMORY);
 }

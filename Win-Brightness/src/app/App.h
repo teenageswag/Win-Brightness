@@ -26,6 +26,8 @@ private:
     void TogglePopup(POINT monitorPoint, bool keyboardInvoked);
     void SyncPopup();
     void ApplySoftwareBrightness();
+    void SaveSettings();
+    void ReportPersistenceResult(const SettingsResult& result, bool autostart);
     void SetBrightness(int percent);
     void SetBrightnessMode(BrightnessMode mode);
     void SetEnabled(bool enabled);
@@ -49,4 +51,6 @@ private:
     bool m_hotkeyRegistered = false;
     bool m_trayIconAdded = false;
     bool m_trayUsesVersion4 = false;
+    LSTATUS m_settingsError = ERROR_SUCCESS;
+    LSTATUS m_autostartError = ERROR_SUCCESS;
 };

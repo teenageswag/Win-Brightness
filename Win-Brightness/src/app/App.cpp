@@ -238,6 +238,8 @@ void App::SyncPopup() {
     popupState.selection = m_state.monitors;
     popupState.monitors = m_controller.GetMonitors();
     popupState.catalogError = m_controller.GetCatalogError();
+    popupState.settingsError = m_settingsError;
+    popupState.autostartError = m_autostartError;
     popupState.autostart = m_autostartEnabled;
     popupState.hotkeyAvailable = m_hotkeyRegistered;
     m_popup->SetState(std::move(popupState));
@@ -261,11 +263,34 @@ void App::ApplySoftwareBrightness() {
     }
 }
 
+void App::SaveSettings() {
+    ReportPersistenceResult(m_settings.Save(m_state), false);
+}
+
+void App::ReportPersistenceResult(const SettingsResult& result, bool autostart) {
+    LSTATUS& previous = autostart ? m_autostartError : m_settingsError;
+    const LSTATUS error = result ? ERROR_SUCCESS : result.error();
+    const bool newlyFailed = error != ERROR_SUCCESS && error != previous;
+    previous = error;
+    if (newlyFailed && m_trayIconAdded) {
+        NOTIFYICONDATAW icon{sizeof(icon)};
+        icon.hWnd = m_hMsgWnd;
+        icon.uID = kTrayIconId;
+        icon.uFlags = NIF_INFO;
+        icon.dwInfoFlags = NIIF_ERROR;
+        swprintf_s(icon.szInfoTitle, L"trenches");
+        swprintf_s(icon.szInfo, autostart
+            ? L"Unable to update Windows startup. Windows error %ld."
+            : L"Unable to save settings. Windows error %ld.", error);
+        Shell_NotifyIconW(NIM_MODIFY, &icon);
+    }
+}
+
 void App::SetBrightness(int percent) {
     m_state.brightness = ClampBrightness(percent);
     m_controller.SetBrightness(m_state.brightness);
     ApplySoftwareBrightness();
-    m_settings.Save(m_state);
+    SaveSettings();
     UpdateTrayIcon();
     SyncPopup();
 }
@@ -274,7 +299,7 @@ void App::SetBrightnessMode(BrightnessMode mode) {
     m_state.mode = mode;
     m_controller.SetBrightnessMode(mode);
     ApplySoftwareBrightness();
-    m_settings.Save(m_state);
+    SaveSettings();
     UpdateTrayIcon();
     SyncPopup();
 }
@@ -283,7 +308,7 @@ void App::SetEnabled(bool enabled) {
     m_state.enabled = enabled;
     m_controller.SetEnabled(enabled);
     ApplySoftwareBrightness();
-    m_settings.Save(m_state);
+    SaveSettings();
     UpdateTrayIcon();
     SyncPopup();
 }
@@ -299,13 +324,13 @@ void App::SetMonitorSelection(MonitorSelection selection) {
     m_state.monitors = std::move(selection);
     m_controller.SetMonitorSelection(m_state.monitors);
     ApplySoftwareBrightness();
-    m_settings.Save(m_state);
+    SaveSettings();
     UpdateTrayIcon();
     SyncPopup();
 }
 
 void App::SetAutostartEnabled(bool enabled) {
-    m_settings.SetAutostartEnabled(enabled);
+    ReportPersistenceResult(m_settings.SetAutostartEnabled(enabled), true);
     m_autostartEnabled = m_settings.IsAutostartEnabled();
     SyncPopup();
 }
@@ -319,7 +344,7 @@ void App::NormalizeMonitorSelection() {
     if (!monitors.empty()) {
         m_state.monitors.ids.push_back(monitors.front().id);
         m_controller.SetMonitorSelection(m_state.monitors);
-        m_settings.Save(m_state);
+        SaveSettings();
     }
 }
 

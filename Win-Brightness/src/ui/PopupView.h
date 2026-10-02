@@ -15,6 +15,8 @@ struct PopupState {
     bool autostart = false;
     bool hotkeyAvailable = true;
     DWORD catalogError = ERROR_SUCCESS;
+    LSTATUS settingsError = ERROR_SUCCESS;
+    LSTATUS autostartError = ERROR_SUCCESS;
 };
 
 struct PopupActions {

@@ -832,7 +832,13 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
                      {layout.autostart.left + ScaleByDpi(14, dpi), layout.autostart.top + ScaleByDpi(3, dpi),
                       layout.autostart.right - ScaleByDpi(48, dpi), layout.autostart.top + ScaleByDpi(26, dpi)},
                      palette.text);
-            DrawText(graphics, L"Launch quietly in the notification area", detail,
+            std::wstring persistenceDetail = L"Launch quietly in the notification area";
+            if (m_state.autostartError != ERROR_SUCCESS) {
+                persistenceDetail = L"Windows startup update failed (" + std::to_wstring(m_state.autostartError) + L")";
+            } else if (m_state.settingsError != ERROR_SUCCESS) {
+                persistenceDetail = L"Settings could not be saved (" + std::to_wstring(m_state.settingsError) + L")";
+            }
+            DrawText(graphics, persistenceDetail, detail,
                      {layout.autostart.left + ScaleByDpi(14, dpi), layout.autostart.top + ScaleByDpi(23, dpi),
                       layout.autostart.right - ScaleByDpi(48, dpi), layout.autostart.bottom - ScaleByDpi(2, dpi)},
                      palette.muted);

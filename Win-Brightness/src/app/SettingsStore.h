@@ -2,6 +2,9 @@
 
 #include "../brightness/BrightnessTypes.h"
 #include <windows.h>
+#include <expected>
+
+using SettingsResult = std::expected<void, LSTATUS>;
 
 struct AppSettings {
     int brightness = kDefaultBrightness;
@@ -13,14 +16,14 @@ struct AppSettings {
 class SettingsStore {
 public:
     AppSettings Load() const;
-    void Save(const AppSettings& settings) const;
+    SettingsResult Save(const AppSettings& settings) const;
 
     bool IsAutostartEnabled() const;
-    void SetAutostartEnabled(bool enabled) const;
+    SettingsResult SetAutostartEnabled(bool enabled) const;
 
 private:
     bool TryReadDword(const wchar_t* valueName, DWORD& value) const;
-    bool WriteDword(const wchar_t* valueName, DWORD value) const;
+    SettingsResult WriteDword(const wchar_t* valueName, DWORD value) const;
     std::vector<std::wstring> ReadStringList(const wchar_t* valueName) const;
-    bool WriteStringList(const wchar_t* valueName, const std::vector<std::wstring>& values) const;
+    SettingsResult WriteStringList(const wchar_t* valueName, const std::vector<std::wstring>& values) const;
 };
