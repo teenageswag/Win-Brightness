@@ -72,13 +72,10 @@ bool App::Init() {
     m_controller.SetMonitorSelection(m_state.monitors);
     m_controller.SetEnabled(m_state.enabled);
     m_controller.SetBrightness(m_state.brightness);
-    if (!m_controller.Init()) {
+    if (!CreateMsgWindow()) {
         return false;
     }
-
-    NormalizeMonitorSelection();
-    ApplySoftwareBrightness();
-    if (!CreateMsgWindow()) {
+    if (!m_controller.Init(m_hMsgWnd)) {
         return false;
     }
 
@@ -389,7 +386,10 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
         return 0;
 
     case WM_DISPLAYCHANGE:
-        m_controller.RefreshMonitors();
+        m_controller.RequestMonitorRefresh();
+        return 0;
+
+    case BrightnessController::kMonitorsChangedMessage:
         NormalizeMonitorSelection();
         ApplySoftwareBrightness();
         UpdateTrayIcon();

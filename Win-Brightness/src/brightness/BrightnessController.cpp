@@ -9,7 +9,7 @@ BrightnessController::~BrightnessController() {
     Cleanup();
 }
 
-bool BrightnessController::Init() {
+bool BrightnessController::Init(HWND notificationWindow) {
     {
         std::lock_guard lock(m_stateMutex);
         if (m_initialized) {
@@ -17,10 +17,18 @@ bool BrightnessController::Init() {
         }
         m_initialized = true;
         m_stopWorker = false;
+        m_refreshPending = true;
+        m_notificationWindow = notificationWindow;
     }
 
-    RefreshMonitors();
-    m_workerThread = std::thread(&BrightnessController::WorkerThreadProc, this);
+    try {
+        m_workerThread = std::thread(&BrightnessController::WorkerThreadProc, this);
+    } catch (const std::system_error&) {
+        std::lock_guard lock(m_stateMutex);
+        m_initialized = false;
+        m_notificationWindow = nullptr;
+        return false;
+    }
     m_workerCv.notify_one();
     return true;
 }
@@ -40,7 +48,6 @@ void BrightnessController::Cleanup() {
         m_workerThread.join();
     }
 
-    m_hardware.ReleaseMonitors();
 }
 
 int BrightnessController::GetBrightness() const {
@@ -111,6 +118,14 @@ MonitorSelection BrightnessController::GetMonitorSelection() const {
     return m_selection;
 }
 
+void BrightnessController::RequestMonitorRefresh() {
+    {
+        std::lock_guard lock(m_stateMutex);
+        m_refreshPending = true;
+    }
+    m_workerCv.notify_one();
+}
+
 void BrightnessController::RefreshMonitors() {
     std::vector<MonitorInfo> monitors = MonitorCatalog::Enumerate();
     m_hardware.RefreshMonitors(monitors);
@@ -121,6 +136,7 @@ void BrightnessController::RefreshMonitors() {
         QueueApplyLocked();
     }
     m_workerCv.notify_one();
+    PostMessageW(m_notificationWindow, kMonitorsChangedMessage, 0, 0);
 }
 
 std::vector<MonitorInfo> BrightnessController::GetMonitors() const {
@@ -144,9 +160,18 @@ void BrightnessController::WorkerThreadProc() {
         ApplyState state;
         {
             std::unique_lock lock(m_stateMutex);
-            m_workerCv.wait(lock, [this] { return m_stopWorker || m_applyPending; });
+            m_workerCv.wait(lock, [this] {
+                return m_stopWorker || m_refreshPending || m_applyPending;
+            });
             if (m_stopWorker) {
                 break;
+            }
+
+            if (m_refreshPending) {
+                m_refreshPending = false;
+                lock.unlock();
+                RefreshMonitors();
+                continue;
             }
 
             m_applyPending = false;
@@ -160,6 +185,7 @@ void BrightnessController::WorkerThreadProc() {
         ApplyBrightness(state);
     }
 
+    m_hardware.ReleaseMonitors();
 }
 
 void BrightnessController::ApplyBrightness(const ApplyState& state) {

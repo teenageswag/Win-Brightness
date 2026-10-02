@@ -13,7 +13,9 @@ public:
     BrightnessController();
     ~BrightnessController();
 
-    bool Init();
+    static constexpr UINT kMonitorsChangedMessage = WM_APP + 1;
+
+    bool Init(HWND notificationWindow);
     void Cleanup();
 
     int GetBrightness() const;
@@ -28,7 +30,7 @@ public:
     void SetMonitorSelection(MonitorSelection selection);
     MonitorSelection GetMonitorSelection() const;
 
-    void RefreshMonitors();
+    void RequestMonitorRefresh();
     std::vector<MonitorInfo> GetMonitors() const;
     bool IsHardwareAvailableForSelection() const;
 
@@ -42,6 +44,7 @@ private:
     };
 
     void QueueApplyLocked();
+    void RefreshMonitors();
     void WorkerThreadProc();
     void ApplyBrightness(const ApplyState& state);
     static std::vector<MonitorInfo> ResolveTargets(const ApplyState& state);
@@ -55,6 +58,8 @@ private:
     bool m_initialized = false;
     bool m_stopWorker = false;
     bool m_applyPending = false;
+    bool m_refreshPending = false;
+    HWND m_notificationWindow = nullptr;
     bool m_enabled = true;
     BrightnessMode m_mode = BrightnessMode::Software;
     MonitorSelection m_selection;
