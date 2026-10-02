@@ -30,6 +30,7 @@ struct MonitorInfo {
     HMONITOR handle = nullptr;
     bool primary = false;
     bool hardwareBrightness = false;
+    DWORD hardwareError = ERROR_SUCCESS;
 };
 
 struct MonitorSelection {

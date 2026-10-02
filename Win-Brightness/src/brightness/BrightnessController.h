@@ -14,6 +14,7 @@ public:
     ~BrightnessController();
 
     static constexpr UINT kMonitorsChangedMessage = WM_APP + 1;
+    static constexpr UINT kHardwareStatusMessage = WM_APP + 2;
 
     bool Init(HWND notificationWindow);
     void Cleanup();
@@ -47,6 +48,7 @@ private:
     void RefreshMonitors();
     void WorkerThreadProc();
     void ApplyBrightness(const ApplyState& state);
+    void PublishWriteResults(const std::vector<HardwareWriteResult>& results);
     static std::vector<MonitorInfo> ResolveTargets(const ApplyState& state);
     static std::vector<std::wstring> MonitorIds(const std::vector<MonitorInfo>& monitors);
 
@@ -65,8 +67,7 @@ private:
     MonitorSelection m_selection;
     std::vector<MonitorInfo> m_monitors;
 
-    bool m_hasApplied = false;
-    BrightnessMode m_appliedMode = BrightnessMode::Software;
+    // IDs with at least one successful write, retained until restoration succeeds.
     std::vector<std::wstring> m_appliedMonitorIds;
 
     HardwareBrightness m_hardware;

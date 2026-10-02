@@ -11,6 +11,13 @@
 #include <vector>
 #include <windows.h>
 
+struct HardwareWriteResult {
+    std::wstring monitorId;
+    size_t physicalIndex = 0;
+    DWORD requestedValue = 0;
+    DWORD error = ERROR_SUCCESS;
+};
+
 class HardwareBrightness {
 public:
     HardwareBrightness() = default;
@@ -20,7 +27,7 @@ public:
     HardwareBrightness& operator=(const HardwareBrightness&) = delete;
 
     void RefreshMonitors(std::vector<MonitorInfo>& monitors);
-    bool ApplyBrightness(int percent, const std::vector<std::wstring>& monitorIds);
+    std::vector<HardwareWriteResult> ApplyBrightness(int percent, const std::vector<std::wstring>& monitorIds);
     void ReleaseMonitors();
 
 private:

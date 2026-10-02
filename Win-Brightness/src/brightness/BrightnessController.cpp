@@ -192,30 +192,59 @@ void BrightnessController::ApplyBrightness(const ApplyState& state) {
     const std::vector<MonitorInfo> targets = ResolveTargets(state);
     const std::vector<std::wstring> targetIds = MonitorIds(targets);
 
-    if (m_hasApplied && m_appliedMode == BrightnessMode::Hardware) {
-        std::vector<std::wstring> removedIds;
-        if (state.mode != BrightnessMode::Hardware) {
-            removedIds = m_appliedMonitorIds;
-        } else {
-            const std::unordered_set<std::wstring> currentIds(targetIds.begin(), targetIds.end());
-            for (const std::wstring& previousId : m_appliedMonitorIds) {
-                if (!currentIds.contains(previousId)) {
-                    removedIds.push_back(previousId);
-                }
-            }
+    std::vector<std::wstring> removedIds;
+    for (const auto& id : m_appliedMonitorIds) {
+        if (state.mode != BrightnessMode::Hardware ||
+            std::ranges::find(targetIds, id) == targetIds.end()) {
+            removedIds.push_back(id);
         }
-        if (!removedIds.empty()) {
-            m_hardware.ApplyBrightness(kMaxBrightness, removedIds);
+    }
+    if (!removedIds.empty()) {
+        const auto restored = m_hardware.ApplyBrightness(kMaxBrightness, removedIds);
+        for (const auto& id : removedIds) {
+            const bool any = std::ranges::any_of(restored, [&](const auto& result) {
+                return result.monitorId == id;
+            });
+            const bool failed = std::ranges::any_of(restored, [&](const auto& result) {
+                return result.monitorId == id && result.error != ERROR_SUCCESS;
+            });
+            if (any && !failed) std::erase(m_appliedMonitorIds, id);
         }
+        PublishWriteResults(restored);
     }
 
     if (state.mode == BrightnessMode::Hardware) {
-        m_hardware.ApplyBrightness(state.enabled ? state.brightness : kMaxBrightness, targetIds);
+        const auto written = m_hardware.ApplyBrightness(
+            state.enabled ? state.brightness : kMaxBrightness, targetIds);
+        for (const auto& result : written) {
+            if (result.error == ERROR_SUCCESS &&
+                std::ranges::find(m_appliedMonitorIds, result.monitorId) == m_appliedMonitorIds.end()) {
+                m_appliedMonitorIds.push_back(result.monitorId);
+            }
+        }
+        PublishWriteResults(written);
     }
+}
 
-    m_hasApplied = true;
-    m_appliedMode = state.mode;
-    m_appliedMonitorIds = targetIds;
+void BrightnessController::PublishWriteResults(const std::vector<HardwareWriteResult>& results) {
+    bool changed = false;
+    {
+        std::lock_guard lock(m_stateMutex);
+        for (auto& monitor : m_monitors) {
+            bool found = false;
+            DWORD error = ERROR_SUCCESS;
+            for (const auto& result : results) {
+                if (result.monitorId != monitor.id) continue;
+                found = true;
+                if (result.error != ERROR_SUCCESS && error == ERROR_SUCCESS) error = result.error;
+            }
+            if (found && error != monitor.hardwareError) {
+                monitor.hardwareError = error;
+                changed = true;
+            }
+        }
+    }
+    if (changed) PostMessageW(m_notificationWindow, kHardwareStatusMessage, 0, 0);
 }
 
 std::vector<MonitorInfo> BrightnessController::ResolveTargets(const ApplyState& state) {

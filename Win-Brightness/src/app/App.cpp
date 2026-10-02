@@ -396,6 +396,10 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
         SyncPopup();
         return 0;
 
+    case BrightnessController::kHardwareStatusMessage:
+        SyncPopup();
+        return 0;
+
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
         case ID_MENU_SHOW:

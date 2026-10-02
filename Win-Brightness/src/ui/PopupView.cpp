@@ -772,6 +772,9 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
                 std::wstring monitorDetail = std::to_wstring(monitorWidth) + L"x" + std::to_wstring(monitorHeight);
                 if (monitor.primary) monitorDetail += L"  ·  Primary";
                 monitorDetail += monitor.hardwareBrightness ? L"  ·  DDC/CI" : L"  ·  No DDC/CI";
+                if (monitor.hardwareError != ERROR_SUCCESS) {
+                    monitorDetail += L"  ·  Error " + std::to_wstring(monitor.hardwareError);
+                }
                 DrawText(graphics, monitorDetail, detail,
                          {item.left + ScaleByDpi(52, dpi), item.top + ScaleByDpi(21, dpi), item.right - ScaleByDpi(46, dpi), item.bottom - ScaleByDpi(2, dpi)},
                          monitor.hardwareBrightness ? palette.muted : palette.disabled);
