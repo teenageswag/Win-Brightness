@@ -864,6 +864,15 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         return 0;
     }
 
+    case WM_CANCELMODE:
+    case WM_CAPTURECHANGED:
+        m_isDragging = false;
+        m_pressed = {};
+        CommitBrightness();
+        if (message == WM_CANCELMODE && GetCapture() == hWnd) ReleaseCapture();
+        InvalidateRect(hWnd, nullptr, FALSE);
+        return 0;
+
     case WM_LBUTTONDOWN: {
         ResetAutoHideTimer();
         const Layout layout = BuildLayout();
