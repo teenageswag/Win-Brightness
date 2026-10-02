@@ -38,7 +38,7 @@ MemoryPaintDc::MemoryPaintDc(HDC targetDc, int width, int height)
 }
 
 MemoryPaintDc::~MemoryPaintDc() {
-    if (m_memoryDc && m_oldBitmap) {
+    if (m_memoryDc && m_oldBitmap && m_oldBitmap != HGDI_ERROR) {
         SelectObject(m_memoryDc, m_oldBitmap);
     }
     if (m_bitmap) {

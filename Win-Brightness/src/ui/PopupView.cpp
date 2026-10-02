@@ -629,9 +629,10 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         const Palette palette = GetPalette();
 
         MemoryPaintDc buffer(target, width, height);
-        if (buffer.Get()) {
+        const HDC paintDc = buffer.Get() ? buffer.Get() : target;
+        if (paintDc) {
             using namespace Gdiplus;
-            Graphics graphics(buffer.Get());
+            Graphics graphics(paintDc);
             graphics.SetSmoothingMode(SmoothingModeAntiAlias);
             graphics.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
 
@@ -857,7 +858,9 @@ LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
                     static_cast<INT>(focusRect.bottom - focusRect.top - 1));
             }
 
-            BitBlt(target, 0, 0, width, height, buffer.Get(), 0, 0, SRCCOPY);
+            if (buffer.Get()) {
+                BitBlt(target, 0, 0, width, height, buffer.Get(), 0, 0, SRCCOPY);
+            }
         }
 
         EndPaint(hWnd, &paint);

@@ -35,7 +35,10 @@ public:
     MemoryPaintDc(const MemoryPaintDc&) = delete;
     MemoryPaintDc& operator=(const MemoryPaintDc&) = delete;
 
-    HDC Get() const { return m_memoryDc; }
+    HDC Get() const {
+        return m_memoryDc && m_bitmap && m_oldBitmap && m_oldBitmap != HGDI_ERROR
+            ? m_memoryDc : nullptr;
+    }
 
 private:
     HDC m_memoryDc = nullptr;
