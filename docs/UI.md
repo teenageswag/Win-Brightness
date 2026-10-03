@@ -29,7 +29,7 @@ All values below are DIP. The shell's top is exactly `rcMonitor.top`; the 16-DIP
 
 | Metric | Value |
 | --- | --- |
-| Panel width | 420, reduced to fit available screen width |
+| Panel width | 460, reduced to fit available screen width |
 | Panel height | 64 + 77 × visible rows; two rows = 218, five = 449 |
 | Visible rows | At most 5; smaller available height further limits the viewport |
 | Outer padding | 15 on all sides |

@@ -183,7 +183,7 @@ int main() try {
     RECT suggested{100, 150, 900, 750};
     popup.HandleMessage(popup.GetHWnd(), WM_DPICHANGED, MAKELONG(144, 144), reinterpret_cast<LPARAM>(&suggested));
     GetWindowRect(popup.GetHWnd(), &actual);
-    Check(actual.top == monitor.rcMonitor.top && actual.right - actual.left == 678, "DPI preserves top anchor and DIP width");
+    Check(actual.top == monitor.rcMonitor.top && actual.right - actual.left == static_cast<LONG>((island::kWidth + 2 * island::kShadowMargin) * 1.5f), "DPI preserves top anchor and DIP width");
     popup.HandleMessage(popup.GetHWnd(), WM_DPICHANGED, MAKELONG(96, 96), reinterpret_cast<LPARAM>(&suggested));
     popup.SetPreferences({island::Theme::Light, false, true});
     popup.Hide(true); popup.Toggle({0, 0}); Settle(popup);

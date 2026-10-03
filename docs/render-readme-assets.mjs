@@ -8,7 +8,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = resolve(root, 'image/readme');
 const frames = resolve(root, process.argv[2] ?? 'build/readme-preview');
 await mkdir(output, { recursive: true });
-const frame = (await readFile(resolve(frames, 'expanded-dark.png'))).toString('base64');
+const frameBytes = await readFile(resolve(frames, 'expanded-dark.png'));
+const frame = frameBytes.toString('base64');
+const frameWidth = frameBytes.readUInt32BE(16) * 1.25;
+const frameHeight = frameBytes.readUInt32BE(20) * 1.25;
 
 const hero = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="680" viewBox="0 0 1280 680" role="img" aria-labelledby="title desc">
   <title id="title">trenches</title>
@@ -31,7 +34,7 @@ const hero = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="680" 
     <path d="M70 443C295 118 350 524 700 330S1050 177 1220 242V540H70z" fill="url(#wave)"/>
     <path d="M84 530C338 171 378 626 768 400S1035 267 1210 284" fill="none" stroke="#ffffff" stroke-opacity=".22" stroke-width="2"/>
     <path d="M136 476C364 235 450 562 792 405S1058 298 1152 314" fill="none" stroke="#7f8795" stroke-opacity=".12" stroke-width="1.5"/>
-    <image href="data:image/png;base64,${frame}" x="357.5" y="58" width="565" height="292.5"/>
+    <image href="data:image/png;base64,${frame}" x="${(1280 - frameWidth) / 2}" y="58" width="${frameWidth}" height="${frameHeight}"/>
   </g>
   <circle cx="640" cy="517" r="2" fill="#545459"/>
   <g fill="#5e5e68" font-family="Segoe UI,Arial,sans-serif" font-size="18" text-anchor="middle">

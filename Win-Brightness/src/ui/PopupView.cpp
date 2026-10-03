@@ -56,7 +56,7 @@ struct PopupView::Impl {
     island::IdleDismissal dismissal;
     std::optional<POINT> lastPointer;
     std::wstring dragId, tooltipText;
-    float scroll = 0, maximumHeight = 449, maximumWidth = 420;
+    float scroll = 0, maximumHeight = 449, maximumWidth = island::kWidth;
     UINT dpi = 96, graphicsRetries = 0;
     HRESULT renderError = S_OK;
     std::array<bool, kShortcuts.size()> shortcuts{};

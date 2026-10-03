@@ -6,7 +6,7 @@
 
 namespace island {
 inline constexpr float kMinimumHeight = 64.0f;
-inline constexpr float kWidth = 420.0f;
+inline constexpr float kWidth = 460.0f;
 inline constexpr float kPadding = 15.0f;
 inline constexpr float kRowHeight = 62.0f;
 inline constexpr float kRowGap = 15.0f;
