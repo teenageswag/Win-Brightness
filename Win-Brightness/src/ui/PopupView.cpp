@@ -683,7 +683,7 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
         r.Tooltip(false);
         const auto point = r.Mouse(lParam); const auto inputLayout = r.Layout(); const auto hit = inputLayout.Hit(point);
         if (hit.control == island::Control::None || (hit.control == island::Control::Slider && !r.Adjustable(hit.monitor))) return 0;
-        r.focus = hit; r.pressed = hit; r.feedback.Target(0.97);
+        r.keyboardMode = false; r.focus = hit; r.pressed = hit; r.feedback.Target(0.97);
         if (hit.control == island::Control::Slider && hit.monitor < r.state.monitors.size()) {
             const auto id = r.state.monitors[hit.monitor].id;
             r.SelectSliderTarget(hit.monitor);

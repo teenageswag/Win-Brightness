@@ -182,11 +182,11 @@ struct Renderer::Impl {
     }
 
     float Scale(Target control, const Frame& frame) const { return control == frame.hot ? frame.hotScale : 1.0f; }
-    void Focus(Rect rect, Target control, const Frame& frame, const Palette& palette) {
-        if (frame.keyboardFocus && control == frame.focus) {
-            rect = {rect.left - 2, rect.top - 2, rect.right + 2, rect.bottom + 2};
-            ShapeFill(rect, std::min(12.0f, rect.Height() * 0.5f), palette.text, 1.0f, true);
-        }
+    bool Focused(Target control, const Frame& frame) const {
+        return frame.keyboardFocus && control == frame.focus;
+    }
+    DWRITE_FONT_WEIGHT ControlWeight(Target control, const Frame& frame) const {
+        return Focused(control, frame) ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_MEDIUM;
     }
     void Slider(const Row& row, const Frame& frame, const Palette& palette) {
         const PopupState& state = *frame.state;
@@ -196,7 +196,9 @@ struct Renderer::Impl {
         const float railValue = row.index < frame.rowValues.size() ? frame.rowValues[row.index] : static_cast<float>(percentValue);
         const float numberFeedback = row.index < frame.rowFeedback.size() ? frame.rowFeedback[row.index] : 0;
         const float alpha = state.enabled && selected ? 1.0f : 0.45f;
-        auto track = palette.track; track.a *= alpha;
+        auto track = Focused({Control::Slider, row.index}, frame)
+            ? Mix(palette.track, palette.text, 0.16f) : palette.track;
+        track.a *= alpha;
         ShapeFill(row.slider, row.slider.Height() * 0.5f, track, Scale({Control::Slider, row.index}, frame));
         Rect fill = row.slider;
         fill.right = fill.left + std::clamp(railValue / 100.0f, 0.0f, 1.0f) * fill.Width();
@@ -216,7 +218,6 @@ struct Renderer::Impl {
                 context->PopAxisAlignedClip();
             }
         }
-        Focus(row.slider, {Control::Slider, row.index}, frame, palette);
     }
 
     void Content(const Layout& layout, const Frame& frame, const Palette& palette, float alpha) {
@@ -242,7 +243,6 @@ struct Renderer::Impl {
                           12, DWRITE_FONT_WEIGHT_NORMAL, failed || unsupported ? palette.error : palette.muted, true);
                 }
                 Slider(row, frame, palette);
-                Focus(row.label, {Control::Monitor, row.index}, frame, palette);
             }
             if (state.monitors.empty()) {
                 Label(state.catalogError ? L"Unable to enumerate displays" : L"Detecting displays\x2026",
@@ -261,20 +261,19 @@ struct Renderer::Impl {
             Rect active = layout.software.Offset(frame.modePosition * layout.software.Width(), 0);
             const Target selectedMode{state.mode == BrightnessMode::Software ? Control::Software : Control::Hardware};
             ShapeFill(active, active.Height() * 0.5f, palette.selected, Scale(selectedMode, frame));
-            if (frame.hot.control == Control::Software && state.mode == BrightnessMode::Hardware)
-                ShapeFill(layout.software, 17, Mix(palette.surface, palette.text, 0.08f), frame.hotScale);
-            if (frame.hot.control == Control::Hardware && state.mode == BrightnessMode::Software)
-                ShapeFill(layout.hardware, 17, Mix(palette.surface, palette.text, 0.08f), frame.hotScale);
-            Label(L"Software", layout.software, 13, DWRITE_FONT_WEIGHT_MEDIUM,
+            if ((frame.hot.control == Control::Software || Focused({Control::Software}, frame)) && state.mode == BrightnessMode::Hardware)
+                ShapeFill(layout.software, 17, Mix(palette.surface, palette.text, 0.12f), Scale({Control::Software}, frame));
+            if ((frame.hot.control == Control::Hardware || Focused({Control::Hardware}, frame)) && state.mode == BrightnessMode::Software)
+                ShapeFill(layout.hardware, 17, Mix(palette.surface, palette.text, 0.12f), Scale({Control::Hardware}, frame));
+            Label(L"Software", layout.software, 13, ControlWeight({Control::Software}, frame),
                   Mix(palette.selectedText, palette.text, frame.modePosition), true);
-            Label(L"Hardware", layout.hardware, 13, DWRITE_FONT_WEIGHT_MEDIUM,
+            Label(L"Hardware", layout.hardware, 13, ControlWeight({Control::Hardware}, frame),
                   Mix(palette.text, palette.selectedText, frame.modePosition), true);
-            ShapeFill(layout.power, 17, palette.surface, Scale({Control::Power}, frame));
-            Label(state.enabled ? L"Disable" : L"Enable", layout.power, 13, DWRITE_FONT_WEIGHT_MEDIUM, palette.text, true);
-            Focus(layout.software, {Control::Software}, frame, palette);
-            Focus(layout.hardware, {Control::Hardware}, frame, palette);
+            const auto powerSurface = Focused({Control::Power}, frame)
+                ? Mix(palette.surface, palette.text, 0.12f) : palette.surface;
+            ShapeFill(layout.power, 17, powerSurface, Scale({Control::Power}, frame));
+            Label(state.enabled ? L"Disable" : L"Enable", layout.power, 13, ControlWeight({Control::Power}, frame), palette.text, true);
         }
-        Focus(layout.power, {Control::Power}, frame, palette);
         context->PopLayer();
     }
 

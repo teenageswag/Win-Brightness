@@ -52,6 +52,21 @@ int wmain(int argc, wchar_t** argv) try {
     scroll = 0;
     state.monitors.resize(2);
     draw(420, island::PanelHeight(2, 1000), L"expanded-dark.png");
+    if (argc > 1) {
+        frame.keyboardFocus = true;
+        frame.focus = {island::Control::Slider, 0};
+        draw(420, island::PanelHeight(2, 1000), L"keyboard-slider-dark.png");
+        frame.focus = {island::Control::Hardware};
+        draw(420, island::PanelHeight(2, 1000), L"keyboard-mode-dark.png");
+        frame.focus = {island::Control::Power};
+        draw(420, island::PanelHeight(2, 1000), L"keyboard-power-dark.png");
+        frame.keyboardFocus = false;
+        frame.hot = {island::Control::Slider, 0}; frame.hotScale = 0.97f;
+        draw(420, island::PanelHeight(2, 1000), L"pressed-slider-dark.png");
+        frame.hot = {island::Control::Power};
+        draw(420, island::PanelHeight(2, 1000), L"pressed-power-dark.png");
+        frame.hot = {}; frame.hotScale = 1;
+    }
     frame.preferences.theme = island::Theme::Light;
     draw(420, island::PanelHeight(2, 1000), L"expanded-light.png");
     state.mode = BrightnessMode::Hardware;
