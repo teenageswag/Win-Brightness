@@ -23,4 +23,5 @@ struct PopupActions {
     std::function<void(bool)> setAutostart;
     std::function<void(HRESULT)> reportUiError;
     std::function<void(POINT)> showContextMenu;
+    std::function<bool(POINT)> isTrayPoint;
 };

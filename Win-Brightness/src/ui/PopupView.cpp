@@ -1,6 +1,7 @@
 #include "PopupView.h"
 #include "island/Spring.h"
 #include "island/FrameClock.h"
+#include "island/Dismissal.h"
 #include "../platform/Win32Helpers.h"
 #include <algorithm>
 #include <cmath>
@@ -14,6 +15,7 @@
 namespace {
 constexpr UINT_PTR kBrightnessTimer = 1;
 constexpr UINT_PTR kGraphicsTimer = 2;
+constexpr UINT_PTR kDismissTimer = 3;
 constexpr UINT kBrightnessInterval = 70;
 constexpr wchar_t kWindowClass[] = L"TrenchesDynamicIsland";
 struct KeyboardShortcut { int id; UINT key; UINT command; UINT modifiers; };
@@ -50,6 +52,9 @@ struct PopupView::Impl {
     bool dirty = true, dragging = false, tracking = false;
     bool brightnessTimer = false, hiding = false, keyboardMode = false;
     bool reducedMotion = false, repositioning = false, finishingDrag = false;
+    bool dismissTimer = false, mouseRegistered = false, contextMenu = false;
+    island::IdleDismissal dismissal;
+    std::optional<POINT> lastPointer;
     std::wstring dragId, tooltipText;
     float scroll = 0, maximumHeight = 449, maximumWidth = 420;
     UINT dpi = 96, graphicsRetries = 0;
@@ -64,6 +69,8 @@ struct PopupView::Impl {
     }
     ~Impl() {
         if (window) {
+            StopDismissal();
+            StopMouseInput();
             KillTimer(window, kBrightnessTimer); KillTimer(window, kGraphicsTimer);
             UnregisterShortcuts();
             if (GetCapture() == window) ReleaseCapture();
@@ -71,6 +78,34 @@ struct PopupView::Impl {
         }
     }
     bool Animate() const { return preferences.animations && !reducedMotion; }
+    void StopDismissal() {
+        dismissal.Cancel(); dismissTimer = false;
+        if (window) KillTimer(window, kDismissTimer);
+    }
+    void ResetDismissal() {
+        if (!window || !IsWindowVisible(window) || hiding || contextMenu || GetCapture() == window) return;
+        dismissal.Reset(GetTickCount64());
+        if (!dismissTimer) dismissTimer = SetTimer(window, kDismissTimer, island::IdleDismissal::kInterval, nullptr) != 0;
+    }
+    void StopMouseInput() {
+        if (!mouseRegistered) return;
+        const RAWINPUTDEVICE device{1, 2, RIDEV_REMOVE, nullptr};
+        if (!RegisterRawInputDevices(&device, 1, sizeof(device)) && actions.reportUiError) {
+            const DWORD error = GetLastError(); actions.reportUiError(error ? HRESULT_FROM_WIN32(error) : E_FAIL);
+        }
+        mouseRegistered = false;
+    }
+    void StartMouseInput() {
+        if (mouseRegistered) return;
+        // Observe clicks without suppressing legacy input or activating the
+        // overlay. This application is the sole owner of raw mouse registration.
+        const RAWINPUTDEVICE device{1, 2, RIDEV_INPUTSINK, window};
+        mouseRegistered = RegisterRawInputDevices(&device, 1, sizeof(device)) != FALSE;
+        if (!mouseRegistered && actions.reportUiError) {
+            const DWORD error = GetLastError();
+            actions.reportUiError(error ? HRESULT_FROM_WIN32(error) : E_FAIL);
+        }
+    }
     void UnregisterShortcuts() {
         for (size_t i = 0; i < kShortcuts.size(); ++i) {
             if (shortcuts[i]) UnregisterHotKey(window, kShortcuts[i].id);
@@ -303,6 +338,7 @@ struct PopupView::Impl {
         if (monitor != state.monitors.end()) rows[id].slider.Target(monitor->brightness);
         if (pending.empty()) { brightnessTimer = false; KillTimer(window, kBrightnessTimer); }
         finishingDrag = false; RequestFrame();
+        ResetDismissal();
     }
     void EnsureFocusVisible() {
         if (focus.control != island::Control::Slider && focus.control != island::Control::Monitor) return;
@@ -429,11 +465,13 @@ void PopupView::Toggle(POINT monitorPoint, bool keyboardInvoked) {
     // Keyboard navigation uses temporary Ctrl+Alt shortcuts, rather than taking
     // focus or intercepting the foreground application's unmodified key events.
     if (keyboardInvoked) r.RegisterShortcuts();
+    r.StartMouseInput(); r.ResetDismissal();
     r.AccessibleName(); r.RequestFrame();
 }
 void PopupView::Hide(bool animated) {
     auto& r = *m_impl;
     if (!r.window) return;
+    r.hiding = true; r.StopDismissal(); r.StopMouseInput();
     r.UnregisterShortcuts();
     r.FinishDrag(); r.Tooltip(false);
     if (animated && r.Animate() && IsVisible() && r.renderer) {
@@ -541,9 +579,37 @@ void PopupView::RenderFrame() {
     if (!r.Moving()) r.lastFrame = {};
 }
 
+void PopupView::NotifyPointerDown(POINT screenPoint) {
+    auto& r = *m_impl;
+    if (!IsVisible() || r.hiding || r.contextMenu || GetCapture() == r.window) return;
+    if (r.actions.isTrayPoint && r.actions.isTrayPoint(screenPoint)) return;
+    RECT window{};
+    if (!GetWindowRect(r.window, &window)) return;
+    const auto point = r.ClientPoint(static_cast<float>(screenPoint.x) - static_cast<float>(window.left),
+                                    static_cast<float>(screenPoint.y) - static_cast<float>(window.top));
+    const float radius = std::min(32.0f, static_cast<float>(r.height.Value()) * 0.14f);
+    if (!island::InsideSquircle(point, r.Layout().shell, radius, true)) Hide(true);
+    else r.ResetDismissal();
+}
+
 LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     auto& r = *m_impl;
     switch (message) {
+    case WM_INPUT: {
+        RAWINPUT input{};
+        UINT bytes = sizeof(input);
+        const UINT read = GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, &input, &bytes, sizeof(RAWINPUTHEADER));
+        constexpr USHORT downs = RI_MOUSE_LEFT_BUTTON_DOWN | RI_MOUSE_RIGHT_BUTTON_DOWN | RI_MOUSE_MIDDLE_BUTTON_DOWN |
+            RI_MOUSE_BUTTON_4_DOWN | RI_MOUSE_BUTTON_5_DOWN;
+        if (read != static_cast<UINT>(-1) && read >= offsetof(RAWINPUT, data) + sizeof(RAWMOUSE) &&
+            input.header.dwType == RIM_TYPEMOUSE && (input.data.mouse.usButtonFlags & downs) != 0) {
+            POINT point{};
+            if (GetCursorPos(&point)) NotifyPointerDown(point);
+        }
+        // Foreground WM_INPUT requires DefWindowProc cleanup, including when a
+        // packet cannot be read. Background input must not consume the click.
+        return GET_RAWINPUT_CODE_WPARAM(wParam) == RIM_INPUT ? DefWindowProcW(window, message, wParam, lParam) : 0;
+    }
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: ValidateRect(window, nullptr); r.RequestFrame(); return 0;
@@ -578,6 +644,13 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
         return TRUE;
     case WM_TIMER:
         if (wParam == kBrightnessTimer) r.CommitBrightness();
+        else if (wParam == kDismissTimer) {
+            KillTimer(window, kDismissTimer); r.dismissTimer = false;
+            const auto now = GetTickCount64();
+            if (r.dismissal.Expired(now)) Hide(true);
+            else if (const UINT remaining = r.dismissal.Remaining(now))
+                r.dismissTimer = SetTimer(window, kDismissTimer, remaining, nullptr) != 0;
+        }
         else if (wParam == kGraphicsTimer) {
             KillTimer(window, kGraphicsTimer);
             const UINT retries = r.graphicsRetries;
@@ -588,6 +661,10 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
         return 0;
     case WM_MOUSEMOVE: {
         const auto point = r.Mouse(lParam);
+        POINT screen{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}; ClientToScreen(window, &screen);
+        if (!r.lastPointer || r.lastPointer->x != screen.x || r.lastPointer->y != screen.y) {
+            r.lastPointer = screen; r.ResetDismissal();
+        }
         if (r.dragging) r.DragTo(point.x, r.pressed.monitor);
         else r.Hover(r.Layout().Hit(point));
         if (!r.tracking) {
@@ -597,6 +674,7 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
     }
     case WM_MOUSELEAVE: r.tracking = false; r.Hover({}); return 0;
     case WM_LBUTTONDOWN: {
+        r.ResetDismissal();
         r.Tooltip(false);
         const auto point = r.Mouse(lParam); const auto inputLayout = r.Layout(); const auto hit = inputLayout.Hit(point);
         if (hit.control == island::Control::None || (hit.control == island::Control::Slider && !r.Adjustable(hit.monitor))) return 0;
@@ -610,6 +688,7 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
             r.dragging = true; r.dragId = id;
             SetCapture(window); r.DragTo(point.x, r.pressed.monitor);
         } else SetCapture(window);
+        if (GetCapture() == window) r.StopDismissal();
         r.AccessibleName(); r.RequestFrame(); return 0;
     }
     case WM_LBUTTONUP: {
@@ -623,10 +702,12 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
         return 0;
     case WM_CANCELMODE: r.FinishDrag(); return 0;
     case WM_MOUSEWHEEL:
+        r.ResetDismissal();
         r.scroll = std::clamp(r.scroll - static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA * island::kRowStride,
                               0.0f, r.Layout().MaximumScroll());
         r.Hover({}); r.RequestFrame(); return 0;
     case WM_KEYDOWN:
+        r.ResetDismissal();
         r.keyboardMode = true;
         if (wParam == VK_ESCAPE) { Hide(true); return 0; }
         if (wParam == VK_TAB) { r.MoveFocus((GetKeyState(VK_SHIFT) & 0x8000) != 0); return 0; }
@@ -655,6 +736,7 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
             });
             if (found != kShortcuts.end()) {
                 if (found->command == VK_TAB) {
+                    r.ResetDismissal();
                     r.keyboardMode = true; r.MoveFocus((found->modifiers & MOD_SHIFT) != 0); return 0;
                 }
                 return HandleMessage(window, WM_KEYDOWN, found->command, 0);
@@ -662,16 +744,19 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
         }
         return 0;
     case WM_ACTIVATE:
-        if (LOWORD(wParam) == WA_INACTIVE && r.keyboardMode && IsVisible()) Hide(false);
+        if (LOWORD(wParam) == WA_INACTIVE && r.keyboardMode && IsVisible() && !r.contextMenu) Hide(true);
         return 0;
     case WM_CONTEXTMENU:
         if (r.actions.showContextMenu) {
             POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             if (point.x == -1 && point.y == -1) GetCursorPos(&point);
+            r.contextMenu = true; r.StopDismissal();
             r.actions.showContextMenu(point);
+            r.contextMenu = false; r.ResetDismissal();
         }
         return 0;
     case WM_NCDESTROY:
+        r.StopDismissal(); r.StopMouseInput();
         r.UnregisterShortcuts();
         r.clock.Stop(); r.renderer.reset(); r.window = nullptr; r.tooltip = nullptr;
         SetWindowLongPtrW(window, GWLP_USERDATA, 0); break;

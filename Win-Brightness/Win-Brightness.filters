@@ -116,6 +116,9 @@
     <ClInclude Include="src\ui\island\Spring.h">
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
+    <ClInclude Include="src\ui\island\Dismissal.h">
+      <Filter>Файлы заголовков</Filter>
+    </ClInclude>
     <ClInclude Include="src\main.h">
       <Filter>Файлы заголовков</Filter>
     </ClInclude>

@@ -102,6 +102,11 @@ bool App::Init() {
         ReportInterfaceError(L"The brightness interface could not render. Display control remains available from the tray.", error);
     };
     actions.showContextMenu = [this](POINT point) { ShowContextMenu(point); };
+    actions.isTrayPoint = [this](POINT point) {
+        NOTIFYICONIDENTIFIER icon{sizeof(icon)}; icon.hWnd = m_hMsgWnd; icon.uID = kTrayIconId;
+        RECT bounds{};
+        return SUCCEEDED(Shell_NotifyIconGetRect(&icon, &bounds)) && PtInRect(&bounds, point);
+    };
 
     m_popup = std::make_unique<PopupView>(m_hInstance, std::move(actions));
     if (!m_popup->Register() || !m_popup->Create()) {

@@ -192,6 +192,7 @@
     <ClInclude Include="src\ui\island\Geometry.h" />
     <ClInclude Include="src\ui\island\Layout.h" />
     <ClInclude Include="src\ui\island\Spring.h" />
+    <ClInclude Include="src\ui\island\Dismissal.h" />
     <ClInclude Include="src\ui\island\Renderer.h" />
     <ClInclude Include="src\ui\island\FrameClock.h" />
     <ClInclude Include="src\ui\island\Preferences.h" />

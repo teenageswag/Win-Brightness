@@ -24,6 +24,7 @@ public:
     HRESULT LastRenderError() const;
     HANDLE FrameWaitHandle() const;
     void RenderFrame();
+    void NotifyPointerDown(POINT screenPoint);
     LRESULT HandleMessage(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 private:
     struct Impl;

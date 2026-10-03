@@ -1,5 +1,6 @@
 #include "ui/island/Spring.h"
 #include "ui/island/Layout.h"
+#include "ui/island/Dismissal.h"
 #include <cstdio>
 #include <stdexcept>
 
@@ -48,6 +49,13 @@ int main() try {
     const auto visible = island::PresentPanel(218, 1);
     Check(hidden.offsetY <= -218 && hidden.scale == 0.97f && hidden.opacity == 0, "panel originates above the display edge");
     Check(visible.offsetY == 0 && visible.scale == 1 && visible.opacity == 1, "panel settles flush without scale drift");
+    island::IdleDismissal idle;
+    idle.Reset(0);
+    Check(!idle.Expired(3499) && idle.Expired(3500), "dismiss exactly after 3.5 seconds of inactivity");
+    idle.Reset(3000);
+    Check(!idle.Expired(3500) && idle.Remaining(3500) == 3000 && idle.Expired(6500), "interaction extends the deadline");
+    idle.Cancel();
+    Check(!idle.Expired(100000) && idle.Remaining(100000) == 0, "hidden or captured UI has no idle deadline");
     std::puts("IslandMathTests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());

@@ -15,6 +15,15 @@ void Pump() {
     MSG message{};
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
 }
+bool OwnsRawMouse(HWND window) {
+    UINT count = 0;
+    Check(GetRegisteredRawInputDevices(nullptr, &count, sizeof(RAWINPUTDEVICE)) != static_cast<UINT>(-1), "query raw registration count");
+    std::vector<RAWINPUTDEVICE> devices(count);
+    if (count) Check(GetRegisteredRawInputDevices(devices.data(), &count, sizeof(RAWINPUTDEVICE)) != static_cast<UINT>(-1), "query raw registrations");
+    return std::ranges::any_of(devices, [window](const auto& device) {
+        return device.usUsagePage == 1 && device.usUsage == 2 && device.hwndTarget == window;
+    });
+}
 ULONGLONG CpuTicks() {
     FILETIME created{}, exited{}, kernel{}, user{};
     Check(GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user) != FALSE, "read CPU time");
@@ -45,6 +54,7 @@ int main() try {
     PopupActions actions;
     actions.setMonitorBrightness = [&](const std::wstring& id, int value) { committedId = id; committed = value; ++commits; };
     actions.setMode = [&](BrightnessMode) { committedBeforeMode = committed; };
+    actions.isTrayPoint = [](POINT point) { return point.x == 1234 && point.y == 9876; };
     PopupView popup(GetModuleHandleW(nullptr), std::move(actions));
     Check(popup.Register() && popup.Create(), "create popup");
     popup.SetPreferences({island::Theme::Dark, false, false});
@@ -59,6 +69,7 @@ int main() try {
     const HWND foreground = GetForegroundWindow();
     popup.Toggle({0, 0}, false);
     Check(popup.IsVisible() && GetForegroundWindow() == foreground, "mouse opening does not activate");
+    Check(OwnsRawMouse(popup.GetHWnd()), "visible popup observes outside clicks without focus");
     RECT actual{}; MONITORINFO monitor{sizeof(monitor)};
     GetMonitorInfoW(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY), &monitor);
     GetWindowRect(popup.GetHWnd(), &actual);
@@ -96,6 +107,8 @@ int main() try {
     Check(committed == afterCapture && afterCapture != 72, "capture loss commits and ends drag");
 
     popup.HandleMessage(popup.GetHWnd(), WM_LBUTTONDOWN, MK_LBUTTON, At(slider, 0.3f));
+    popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 3, 0);
+    Check(popup.IsVisible() && GetCapture() == popup.GetHWnd(), "idle dismissal is suspended during a drag");
     popup.HandleMessage(popup.GetHWnd(), WM_CANCELMODE, 0, 0);
     Check(GetCapture() != popup.GetHWnd(), "cancel releases capture");
     const int afterCancel = committed;
@@ -161,6 +174,7 @@ int main() try {
     popup.Hide(true); popup.Toggle({0, 0}); Settle(popup);
     Check(popup.IsVisible(), "closing animation can be interrupted");
     popup.Hide();
+    Check(!OwnsRawMouse(popup.GetHWnd()), "closing unregisters raw mouse observation");
     Check(!popup.IsVisible() && popup.FrameWaitHandle() == nullptr, "hidden popup has no frames");
     const bool shortcutWasFree = RegisterHotKey(popup.GetHWnd(), 500,
         MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_RIGHT) != FALSE;
@@ -197,6 +211,20 @@ int main() try {
     Pump();
     Check(GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS) == gdiBefore, "popup recreation does not leak GDI objects");
     Check(GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS) == userBefore, "popup recreation does not leak USER objects");
+    popup.Toggle({0, 0}); Settle(popup);
+    GetWindowRect(popup.GetHWnd(), &actual);
+    popup.NotifyPointerDown({actual.left + 100, actual.top + 25});
+    Check(popup.IsVisible(), "click inside the visible panel keeps it open");
+    popup.NotifyPointerDown({1234, 9876});
+    Check(popup.IsVisible(), "own tray click is handled by toggle rather than outside dismissal");
+    popup.NotifyPointerDown({actual.right + 100, actual.top + 25});
+    Check(popup.IsVisible(), "outside dismissal starts an animation rather than hiding immediately");
+    Settle(popup);
+    Check(!popup.IsVisible() && !OwnsRawMouse(popup.GetHWnd()), "outside click animates out and releases raw observation");
+    popup.Toggle({0, 0}); Settle(popup);
+    Sleep(3600); Pump(); Settle(popup);
+    Check(!popup.IsVisible() && popup.FrameWaitHandle() == nullptr && !OwnsRawMouse(popup.GetHWnd()),
+          "3.5 second timer animates out and leaves no hidden frame or input wakeups");
     std::puts("PopupTests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what()); return 1;
