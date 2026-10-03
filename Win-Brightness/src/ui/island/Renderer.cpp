@@ -205,9 +205,6 @@ struct Renderer::Impl {
         Label(value, rect, 13, ControlWeight(control, frame), color, true);
     }
     void Slider(const Row& row, const Frame& frame, const Palette& palette) {
-        // Scale the rail, fill, text and clips together around the full control;
-        // scaling the rail alone makes the fill protrude while pressing.
-        const ControlTransform transform(context.Get(), row.slider, Scale({Control::Slider, row.index}, frame));
         const PopupState& state = *frame.state;
         const bool selected = row.index < state.monitors.size() && (state.mode == BrightnessMode::Software ||
             (state.monitors[row.index].hardwareBrightness && state.monitors[row.index].hardwareStatus == HardwareStatus::Available));
