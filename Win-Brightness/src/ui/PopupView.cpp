@@ -317,11 +317,16 @@ struct PopupView::Impl {
         motion.number.Target(1.0); QueueBrightness(); AccessibleName(); RequestFrame();
     }
     void DragTo(float x, size_t index) {
-        const double value = BrightnessAt(x, index);
         if (!Adjustable(index)) return;
+        const std::wstring id = state.monitors[index].id;
+        const double value = BrightnessAt(x, index);
         DisplayBrightness(index, static_cast<int>(std::lround(value)), true);
         // Keep the painted fill continuous between integer hardware targets.
-        rows[state.monitors[index].id].slider.Snap(value); RequestFrame();
+        // A failed throttle timer dispatches synchronously; its callback can
+        // refresh the catalog and cancel capture before this function returns.
+        const auto motion = rows.find(id);
+        if (dragging && dragId == id && motion != rows.end()) motion->second.slider.Snap(value);
+        RequestFrame();
     }
     void SelectSliderTarget(size_t index) {
         if (index < state.monitors.size()) focus = {island::Control::Slider, index};
