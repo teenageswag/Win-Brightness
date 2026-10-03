@@ -55,6 +55,15 @@ int main() try {
     monitors[0].bounds.left += 1;
     overlay.Apply(60, monitors);
     Check(positionChanges > 0, "update geometry when monitor bounds change");
+    monitors[0].brightness = 20; monitors[1].brightness = 80;
+    overlay.Apply(monitors);
+    BYTE firstAlpha = 0, secondAlpha = 0;
+    Check(GetLayeredWindowAttributes(before[0], nullptr, &firstAlpha, nullptr) &&
+          GetLayeredWindowAttributes(before[1], nullptr, &secondAlpha, nullptr) && firstAlpha != secondAlpha,
+          "independent display values produce different overlay alpha");
+    monitors[1].brightness = 100;
+    overlay.Apply(monitors);
+    Check(OverlayWindows().size() == 1, "100 percent removes only its own display overlay");
     monitors.resize(1);
     overlay.Apply(60, monitors);
     Check(OverlayWindows().size() == 1, "remove deselected monitor window");

@@ -63,8 +63,13 @@ BYTE DimOverlay::AlphaFromPercent(int percent) const {
 }
 
 void DimOverlay::Apply(int percent, const std::vector<MonitorInfo>& monitors) {
-    const BYTE alpha = AlphaFromPercent(percent);
-    if (alpha == 0 || monitors.empty()) {
+    auto targets = monitors;
+    for (auto& monitor : targets) monitor.brightness = ClampBrightness(percent);
+    Apply(targets);
+}
+
+void DimOverlay::Apply(const std::vector<MonitorInfo>& monitors) {
+    if (monitors.empty()) {
         Destroy();
         return;
     }
@@ -74,7 +79,7 @@ void DimOverlay::Apply(int percent, const std::vector<MonitorInfo>& monitors) {
 
     std::unordered_set<std::wstring> targetIds;
     for (const MonitorInfo& monitor : monitors) {
-        targetIds.insert(monitor.id);
+        if (AlphaFromPercent(monitor.brightness) != 0) targetIds.insert(monitor.id);
     }
 
     std::erase_if(m_windows, [&targetIds](const OverlayWindow& window) {
@@ -89,6 +94,8 @@ void DimOverlay::Apply(int percent, const std::vector<MonitorInfo>& monitors) {
 
     const HINSTANCE instance = GetModuleHandle(nullptr);
     for (const MonitorInfo& monitor : monitors) {
+        const BYTE alpha = AlphaFromPercent(monitor.brightness);
+        if (alpha == 0) continue;
         auto existing = std::ranges::find(m_windows, monitor.id, &OverlayWindow::monitorId);
         HWND window = existing != m_windows.end() ? existing->handle : nullptr;
         if (!IsWindow(window)) {

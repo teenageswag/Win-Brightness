@@ -7,6 +7,7 @@
 namespace {
 std::atomic<unsigned> enumerations{0};
 std::atomic<bool> failEnumeration{false};
+std::atomic<size_t> displayCount{1};
 void Check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
@@ -28,9 +29,11 @@ struct Window {
 std::expected<std::vector<MonitorInfo>, DWORD> MonitorCatalog::Enumerate() {
     ++enumerations;
     if (failEnumeration) return std::unexpected(ERROR_GEN_FAILURE);
-    std::vector<MonitorInfo> monitors(1);
-    monitors[0].id = L"display";
-    monitors[0].handle = reinterpret_cast<HMONITOR>(1);
+    std::vector<MonitorInfo> monitors(displayCount.load());
+    for (size_t i = 0; i < monitors.size(); ++i) {
+        monitors[i].id = i == 0 ? L"display" : L"second";
+        monitors[i].handle = reinterpret_cast<HMONITOR>(i + 1);
+    }
     return monitors;
 }
 
@@ -143,6 +146,39 @@ int main() try {
         std::lock_guard lock(fake::writesMutex);
         Check(fake::writes.size() == 1, "stop before second physical monitor write");
     }
+    displayCount = 2; fake::writeDelayMs = 0;
+    controller.SetBrightnessMode(BrightnessMode::Software);
+    controller.SetMonitorBrightnessValues({{L"display", 20}, {L"second", 80}});
+    Check(controller.Init(window.handle), "restart for independent display targets");
+    WaitUntil([&] { return controller.GetMonitors().size() == 2; }, "enumerate two independent displays");
+    Check(controller.GetMonitors()[0].brightness == 20 && controller.GetMonitors()[1].brightness == 80,
+          "load individual brightness values into the catalog");
+    {
+        std::lock_guard lock(fake::writesMutex); fake::writes.clear();
+    }
+    controller.SetBrightnessMode(BrightnessMode::Hardware);
+    WaitUntil([] { std::lock_guard lock(fake::writesMutex); return fake::writes.size() >= 4; }, "write independent hardware targets");
+    {
+        std::lock_guard lock(fake::writesMutex);
+        Check(fake::writes[0].value == 20 && fake::writes[2].value == 80, "hardware brightness is independent per display");
+    }
+    Check(controller.SetMonitorBrightness(L"display", 35), "update one monitor target");
+    WaitUntil([] { std::lock_guard lock(fake::writesMutex); return fake::writes.size() >= 6; }, "apply one monitor adjustment");
+    {
+        std::lock_guard lock(fake::writesMutex);
+        Check(fake::writes.size() == 6 && fake::writes[4].value == 35,
+              "unchanged second monitor receives no extra hardware writes");
+    }
+    fake::probeFailureMask = 12; fake::probeError = ERROR_NOT_SUPPORTED;
+    controller.RequestMonitorRefresh();
+    WaitUntil([&] { return controller.GetMonitors()[1].hardwareStatus == HardwareStatus::Unsupported; }, "second display becomes unavailable");
+    Check(!controller.SetMonitorBrightness(L"second", 5) && controller.GetMonitors()[1].brightness == 80,
+          "unavailable hardware target is unchanged");
+    Check(!controller.SetMonitorBrightness(L"missing", 5), "disconnected display has no target mutation");
+    controller.SetBrightnessMode(BrightnessMode::Software);
+    Check(controller.SetMonitorBrightness(L"second", 42) && controller.GetMonitors()[0].brightness == 35,
+          "software targets stay independent even without DDC support");
+    controller.Cleanup();
     std::puts("ControllerTests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());

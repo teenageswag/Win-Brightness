@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <string>
+#include <map>
 #include <vector>
 #include <windows.h>
 
@@ -29,6 +30,7 @@ inline constexpr int kDefaultBrightness = 72;
 inline int ClampBrightness(int percent) {
     return std::clamp(percent, kMinBrightness, kMaxBrightness);
 }
+using MonitorBrightnessValues = std::map<std::wstring, int>;
 
 struct MonitorInfo {
     std::wstring id;
@@ -41,6 +43,7 @@ struct MonitorInfo {
     DWORD hardwareError = ERROR_SUCCESS;
     HardwareStatus hardwareStatus = HardwareStatus::Unknown;
     bool hardwareActive = false;
+    int brightness = kDefaultBrightness;
 };
 
 struct MonitorSelection {

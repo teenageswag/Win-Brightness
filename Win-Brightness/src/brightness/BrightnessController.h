@@ -23,6 +23,8 @@ public:
 
     int GetBrightness() const;
     void SetBrightness(int percent);
+    bool SetMonitorBrightness(const std::wstring& id, int percent);
+    void SetMonitorBrightnessValues(MonitorBrightnessValues values);
 
     void SetEnabled(bool enabled);
     bool IsEnabled() const;
@@ -76,6 +78,7 @@ private:
     bool m_enabled = true;
     BrightnessMode m_mode = BrightnessMode::Software;
     MonitorSelection m_selection;
+    MonitorBrightnessValues m_monitorBrightness;
     std::vector<MonitorInfo> m_monitors;
 
     struct AppliedPhysicalMonitor {

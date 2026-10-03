@@ -31,11 +31,13 @@ BOOL WINAPI GetNumberOfPhysicalMonitorsFromHMONITOR(HMONITOR, LPDWORD count) {
     *count = 2;
     return TRUE;
 }
-BOOL WINAPI GetPhysicalMonitorsFromHMONITOR(HMONITOR, DWORD count, LPPHYSICAL_MONITOR monitors) {
+BOOL WINAPI GetPhysicalMonitorsFromHMONITOR(HMONITOR display, DWORD count, LPPHYSICAL_MONITOR monitors) {
     if (count != 2) return FALSE;
     for (DWORD i = 0; i < count; ++i) {
         monitors[i] = {};
-        monitors[i].hPhysicalMonitor = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(i + 1));
+        const uintptr_t displayIndex = reinterpret_cast<uintptr_t>(display);
+        const uintptr_t base = displayIndex > 0 ? (displayIndex - 1) * 2 : 0;
+        monitors[i].hPhysicalMonitor = reinterpret_cast<HANDLE>(base + i + 1);
     }
     if (fake::afterAcquisition) fake::afterAcquisition();
     return TRUE;

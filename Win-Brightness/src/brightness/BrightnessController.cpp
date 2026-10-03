@@ -62,6 +62,38 @@ void BrightnessController::SetBrightness(int percent) {
     m_currentBrightness.store(ClampBrightness(percent), std::memory_order_relaxed);
     {
         std::lock_guard lock(m_stateMutex);
+        for (auto& [id, value] : m_monitorBrightness) value = ClampBrightness(percent);
+        for (auto& monitor : m_monitors) monitor.brightness = ClampBrightness(percent);
+        QueueApplyLocked();
+    }
+    m_workerCv.notify_one();
+}
+
+bool BrightnessController::SetMonitorBrightness(const std::wstring& id, int percent) {
+    {
+        std::lock_guard lock(m_stateMutex);
+        const auto found = std::ranges::find(m_monitors, id, &MonitorInfo::id);
+        if (found == m_monitors.end() || (m_mode == BrightnessMode::Hardware &&
+            (!found->hardwareBrightness || found->hardwareStatus != HardwareStatus::Available))) return false;
+        const int value = ClampBrightness(percent);
+        m_monitorBrightness[id] = value;
+        found->brightness = value;
+        QueueApplyLocked();
+    }
+    m_workerCv.notify_one();
+    return true;
+}
+
+void BrightnessController::SetMonitorBrightnessValues(MonitorBrightnessValues values) {
+    std::erase_if(values, [](const auto& entry) { return entry.first.empty(); });
+    for (auto& [id, value] : values) value = ClampBrightness(value);
+    {
+        std::lock_guard lock(m_stateMutex);
+        m_monitorBrightness = std::move(values);
+        for (auto& monitor : m_monitors) {
+            const auto found = m_monitorBrightness.find(monitor.id);
+            monitor.brightness = found == m_monitorBrightness.end() ? GetBrightness() : found->second;
+        }
         QueueApplyLocked();
     }
     m_workerCv.notify_one();
@@ -150,6 +182,8 @@ void BrightnessController::RefreshMonitors() {
     {
         std::lock_guard lock(m_stateMutex);
         for (auto& monitor : monitors) {
+            const auto value = m_monitorBrightness.find(monitor.id);
+            monitor.brightness = value == m_monitorBrightness.end() ? GetBrightness() : value->second;
             monitor.hardwareActive =
                 std::ranges::find(m_appliedMonitorIds, monitor.id) != m_appliedMonitorIds.end();
         }
@@ -248,7 +282,8 @@ void BrightnessController::WorkerThreadProc() {
                 for (auto& monitor : m_monitors) {
                     monitor.hardwareActive =
                         std::ranges::find(m_appliedMonitorIds, monitor.id) != m_appliedMonitorIds.end() ||
-                        (state.mode == BrightnessMode::Hardware && state.selection.Contains(monitor.id));
+                        (state.mode == BrightnessMode::Hardware && state.selection.Contains(monitor.id) &&
+                         monitor.hardwareBrightness && monitor.hardwareStatus == HardwareStatus::Available);
                 }
             } catch (const std::bad_alloc&) {
                 lock.unlock();
@@ -294,15 +329,24 @@ void BrightnessController::ApplyBrightness(const ApplyState& state) {
     }
 
     if (state.mode == BrightnessMode::Hardware) {
-        const auto written = m_hardware.ApplyBrightness(
-            state.enabled ? state.brightness : kMaxBrightness, targetIds, &m_cancelIo);
+        std::vector<HardwareWriteResult> written;
+        for (const auto& monitor : targets) {
+            // An unavailable display is left untouched. Other displays retain
+            // their own targets; a single failure cannot apply a group value.
+            if (!monitor.hardwareBrightness || monitor.hardwareStatus != HardwareStatus::Available) continue;
+            auto results = m_hardware.ApplyBrightness(state.enabled ? monitor.brightness : kMaxBrightness,
+                                                     {monitor.id}, &m_cancelIo);
+            written.insert(written.end(), results.begin(), results.end());
+            if (m_cancelIo.load(std::memory_order_relaxed)) return;
+        }
         if (m_cancelIo.load(std::memory_order_relaxed)) return;
         for (const auto& result : written) {
             if (result.error != ERROR_SUCCESS) continue;
             const auto matches = [&](const auto& physical) {
                 return physical.id == result.monitorId && physical.index == result.physicalIndex;
             };
-            if (!state.enabled || state.brightness == kMaxBrightness) {
+            const auto monitor = std::ranges::find(targets, result.monitorId, &MonitorInfo::id);
+            if (!state.enabled || (monitor != targets.end() && monitor->brightness == kMaxBrightness)) {
                 std::erase_if(m_appliedPhysicalMonitors, matches);
             } else if (!std::ranges::any_of(m_appliedPhysicalMonitors, matches)) {
                 m_appliedPhysicalMonitors.push_back({result.monitorId, result.physicalIndex});
