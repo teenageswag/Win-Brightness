@@ -20,13 +20,13 @@ int main() try {
     Check(std::isfinite(slow.Value()), "interrupted spring stays finite");
     slow.Advance(10.0);
     Check(!slow.Active() && slow.Value() == 344.0, "spring sleeps after settling");
-    Check(island::ExpandedHeight(5, 1000.0f) == island::ExpandedHeight(8, 1000.0f), "five-row height cap");
-    const auto layout = island::Layout::Build(420, island::ExpandedHeight(8, 1000), true, 8, 0, 0);
+    Check(island::PanelHeight(5, 1000.0f) == island::PanelHeight(8, 1000.0f), "five-row height cap");
+    const auto layout = island::Layout::Build(420, island::PanelHeight(8, 1000), 8, 0);
     Check(layout.MaximumScroll() == 3 * island::kRowStride, "overflow rows scroll instead of resizing");
     Check(layout.rows[1].label.top - layout.rows[0].slider.bottom == 15, "row spacing");
     Check(layout.rows[0].slider.top - layout.rows[0].label.bottom == 10, "label spacing");
     Check(layout.viewport.left == 15 && layout.viewport.top == 15, "outer padding");
-    const auto narrow = island::Layout::Build(340, island::ExpandedHeight(5, 1000, 340), true, 5, 0, 0, 340);
+    const auto narrow = island::Layout::Build(340, island::PanelHeight(5, 1000, 340), 5, 0, 340);
     Check(narrow.power.Width() >= 75 && narrow.hardware.Width() >= 85,
           "buttons remain usable on a narrow DPI-scaled desktop");
     Check(narrow.MaximumScroll() == 0 && narrow.power.top > narrow.hardware.bottom,

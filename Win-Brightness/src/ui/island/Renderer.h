@@ -13,9 +13,7 @@ struct Preferences {
 };
 struct Frame {
     const PopupState* state = nullptr;
-    Layout compact;
-    Layout expanded;
-    float expansion = 0.0f;
+    Layout layout;
     float opacity = 1.0f;
     float radius = 32.0f;
     std::vector<float> rowValues;

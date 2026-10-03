@@ -19,8 +19,6 @@ public:
     void SetState(PopupState state);
     void SetPreferences(island::Preferences preferences);
     island::Preferences GetPreferences() const;
-    void SetExpanded(bool expanded);
-    bool IsExpanded() const;
     island::Layout GetLayout() const;
     HRESULT LastRenderError() const;
     HANDLE FrameWaitHandle() const;

@@ -18,7 +18,7 @@ int wmain(int argc, wchar_t** argv) try {
     Check(window != nullptr, "create renderer window");
     struct WindowOwner { HWND value; ~WindowOwner() { DestroyWindow(value); } } owner{window};
     island::Renderer renderer;
-    CheckHr(renderer.Initialize(window, module, 96, island::ExpandedHeight(5, 1000)), "initialize renderer");
+    CheckHr(renderer.Initialize(window, module, 96, island::PanelHeight(5, 1000)), "initialize renderer");
     Check(renderer.UsesInter(), "renderer uses embedded font");
     PopupState state;
     state.brightness = 72;
@@ -38,35 +38,32 @@ int wmain(int argc, wchar_t** argv) try {
     for (auto& monitor : state.monitors) monitor.hardwareBrightness = monitor.hardwareStatus == HardwareStatus::Available;
     float scale = 1;
     float scroll = 0;
-    auto draw = [&](float w, float h, float expansion, const wchar_t* output) {
-        frame.compact = island::Layout::Build(w, h, false, state.monitors.size(), 0, 0);
-        frame.expanded = island::Layout::Build(w, h, true, state.monitors.size(), 0, scroll, w);
-        frame.expansion = expansion;
-        frame.radius = expansion == 0 ? 32 : h * 0.14f;
+    auto draw = [&](float w, float h, const wchar_t* output) {
+        frame.layout = island::Layout::Build(w, h, state.monitors.size(), scroll, w);
+        frame.radius = std::min(32.0f, h * 0.14f);
         SetWindowPos(window, nullptr, -10000, -10000, static_cast<int>((w + 32) * scale), static_cast<int>((h + 16) * scale),
                      SWP_NOACTIVATE | SWP_NOZORDER);
         Check(WaitForSingleObject(renderer.FrameHandle(), 2000) == WAIT_OBJECT_0, "VSync frame handle");
         const std::wstring path = argc > 1 ? std::wstring(argv[1]) + L"/" + output : L"";
         CheckHr(renderer.Draw(frame, path.empty() ? nullptr : path.c_str()), "render frame");
     };
-    draw(344, 64, 0, L"compact-dark.png");
-    draw(420, island::ExpandedHeight(8, 1000), 1, L"five-monitors-dark.png");
+    draw(420, island::PanelHeight(8, 1000), L"five-monitors-dark.png");
     scroll = island::kRowStride * 3;
-    draw(420, island::ExpandedHeight(8, 1000), 1, L"scrolled-dark.png");
+    draw(420, island::PanelHeight(8, 1000), L"scrolled-dark.png");
     scroll = 0;
     state.monitors.resize(2);
-    draw(420, island::ExpandedHeight(2, 1000), 1, L"expanded-dark.png");
+    draw(420, island::PanelHeight(2, 1000), L"expanded-dark.png");
     frame.preferences.theme = island::Theme::Light;
-    draw(420, island::ExpandedHeight(2, 1000), 1, L"expanded-light.png");
+    draw(420, island::PanelHeight(2, 1000), L"expanded-light.png");
     state.mode = BrightnessMode::Hardware;
     frame.modePosition = 1;
-    draw(420, island::ExpandedHeight(2, 1000), 1, L"hardware-light.png");
-    CheckHr(renderer.Resize(144, island::ExpandedHeight(5, 1000)), "resize for DPI");
+    draw(420, island::PanelHeight(2, 1000), L"hardware-light.png");
+    CheckHr(renderer.Resize(144, island::PanelHeight(5, 1000)), "resize for DPI");
     scale = 1.5f;
-    draw(420, island::ExpandedHeight(2, 1000), 1, L"expanded-144.png");
+    draw(420, island::PanelHeight(2, 1000), L"expanded-144.png");
     scale = 1;
-    CheckHr(renderer.Resize(96, island::ExpandedHeight(5, 1000, 340)), "resize for narrow desktop");
-    draw(340, island::ExpandedHeight(2, 1000, 340), 1, L"narrow-light.png");
+    CheckHr(renderer.Resize(96, island::PanelHeight(5, 1000, 340)), "resize for narrow desktop");
+    draw(340, island::PanelHeight(2, 1000, 340), L"narrow-light.png");
     std::puts("RendererTests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());

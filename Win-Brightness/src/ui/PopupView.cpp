@@ -18,13 +18,13 @@ constexpr UINT kBrightnessInterval = 70;
 constexpr wchar_t kWindowClass[] = L"TrenchesDynamicIsland";
 struct KeyboardShortcut { int id; UINT key; UINT command; UINT modifiers; };
 constexpr UINT kControlModifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
-constexpr std::array<KeyboardShortcut, 13> kShortcuts{{
+constexpr std::array<KeyboardShortcut, 12> kShortcuts{{
     {21, VK_LEFT, VK_LEFT, kControlModifiers}, {22, VK_RIGHT, VK_RIGHT, kControlModifiers},
     {23, VK_UP, VK_UP, kControlModifiers}, {24, VK_DOWN, VK_DOWN, kControlModifiers},
     {25, VK_HOME, VK_HOME, kControlModifiers}, {26, VK_END, VK_END, kControlModifiers},
     {27, VK_PRIOR, VK_PRIOR, kControlModifiers}, {28, VK_NEXT, VK_NEXT, kControlModifiers},
     {29, 'N', VK_TAB, kControlModifiers}, {30, VK_RETURN, VK_RETURN, kControlModifiers},
-    {31, 'E', 'E', kControlModifiers}, {32, VK_ESCAPE, VK_ESCAPE, kControlModifiers},
+    {32, VK_ESCAPE, VK_ESCAPE, kControlModifiers},
     {33, 'N', VK_TAB, kControlModifiers | MOD_SHIFT}
 }};
 }
@@ -37,8 +37,8 @@ struct PopupView::Impl {
     island::Preferences preferences;
     std::unique_ptr<island::Renderer> renderer;
     island::FrameClock clock;
-    island::Spring width{island::kCompactWidth}, height{island::kCompactHeight};
-    island::Spring expansion{0}, visibility{1, island::kFeedbackSpring};
+    island::Spring width{island::kWidth}, height{island::kMinimumHeight};
+    island::Spring visibility{1, island::kFeedbackSpring};
     struct RowMotion {
         island::Spring slider{kDefaultBrightness, island::kSliderSpring};
         island::Spring number{0, island::kFeedbackSpring};
@@ -47,7 +47,7 @@ struct PopupView::Impl {
     MonitorBrightnessValues pending;
     island::Spring mode{0, island::kFeedbackSpring}, feedback{1, island::kFeedbackSpring};
     island::Target focus{island::Control::Slider, 0}, hover{}, pressed{};
-    bool expanded = false, dirty = true, dragging = false, dragCompact = false, tracking = false;
+    bool dirty = true, dragging = false, tracking = false;
     bool brightnessTimer = false, hiding = false, keyboardMode = false;
     bool reducedMotion = false, repositioning = false, finishingDrag = false;
     std::wstring dragId, tooltipText;
@@ -105,22 +105,20 @@ struct PopupView::Impl {
         if (window) PostMessageW(window, WM_NULL, 0, 0);
     }
     bool Moving() const {
-        return width.Active(0.05) || height.Active(0.05) || expansion.Active() || visibility.Active() ||
+        return width.Active(0.05) || height.Active(0.05) || visibility.Active() ||
             mode.Active() || feedback.Active() || std::ranges::any_of(rows, [](const auto& entry) {
                 return entry.second.slider.Active(0.05) || entry.second.number.Active();
             });
     }
-    island::Layout Layout(bool isExpanded) const {
+    island::Layout Layout() const {
         return island::Layout::Build(static_cast<float>(width.Value()), static_cast<float>(height.Value()),
-            isExpanded, state.monitors.size(), Primary(), scroll, maximumWidth);
+            state.monitors.size(), scroll, maximumWidth);
     }
-    island::Layout InteractiveLayout() const { return Layout(expansion.Value() >= 0.5); }
     void Targets() {
-        width.Target(std::min(expanded ? island::kExpandedWidth : island::kCompactWidth, maximumWidth));
-        height.Target(expanded ? island::ExpandedHeight(state.monitors.size(), maximumHeight, maximumWidth) : island::kCompactHeight);
-        expansion.Target(expanded ? 1.0 : 0.0);
+        width.Target(maximumWidth);
+        height.Target(island::PanelHeight(state.monitors.size(), maximumHeight, maximumWidth));
         if (!Animate()) {
-            width.Snap(width.Target()); height.Snap(height.Target()); expansion.Snap(expansion.Target());
+            width.Snap(width.Target()); height.Snap(height.Target());
         }
         RequestFrame();
     }
@@ -132,9 +130,9 @@ struct PopupView::Impl {
     void MeasureMonitor(bool updateDpi) {
         const auto info = Monitor();
         if (updateDpi) dpi = static_cast<UINT>(GetDpiForPoint({info.rcMonitor.left + 1, info.rcMonitor.top + 1}));
-        maximumWidth = std::max(200.0f, std::min(island::kExpandedWidth,
+        maximumWidth = std::max(200.0f, std::min(island::kWidth,
             static_cast<float>(info.rcMonitor.right - info.rcMonitor.left) / Scale() - island::kShadowMargin * 2));
-        maximumHeight = std::max(island::kCompactHeight, std::min(island::ExpandedHeight(5, 10000, maximumWidth),
+        maximumHeight = std::max(island::kMinimumHeight, std::min(island::PanelHeight(5, 10000, maximumWidth),
             static_cast<float>(info.rcWork.bottom - info.rcMonitor.top) / Scale() - island::kShadowMargin));
     }
     void Position() {
@@ -178,11 +176,11 @@ struct PopupView::Impl {
         return {GET_X_LPARAM(param) / Scale() - inset, GET_Y_LPARAM(param) / Scale()};
     }
     double BrightnessAt(float x, size_t index) const {
-        const auto layout = InteractiveLayout();
+        const auto layout = Layout();
         const auto row = std::ranges::find_if(layout.rows, [index](const auto& item) { return item.index == index; });
         auto rect = row == layout.rows.end() ? island::Rect{} : row->slider;
-        if (layout.expanded) { rect.left += 10; rect.right -= 10; }
-        if (rect.Width() <= 0) return state.brightness;
+        rect.left += 10; rect.right -= 10;
+        if (rect.Width() <= 0) return index < state.monitors.size() ? state.monitors[index].brightness : kDefaultBrightness;
         const float ratio = std::clamp((x - rect.left) / rect.Width(), 0.0f, 1.0f);
         return static_cast<double>(ratio) * 99.0 + 1.0;
     }
@@ -205,7 +203,6 @@ struct PopupView::Impl {
         case island::Control::Software: name += L"Software dimming."; break;
         case island::Control::Hardware: name += L"Hardware DDC CI."; break;
         case island::Control::Power: name += state.enabled ? L"Disable dimming." : L"Enable dimming."; break;
-        case island::Control::Expand: name += expanded ? L"Collapse." : L"Expand."; break;
         case island::Control::None: break;
         }
         if (FAILED(renderError)) name += L" Graphics unavailable.";
@@ -300,8 +297,8 @@ struct PopupView::Impl {
         finishingDrag = false; RequestFrame();
     }
     void EnsureFocusVisible() {
-        if (!expanded || (focus.control != island::Control::Slider && focus.control != island::Control::Monitor)) return;
-        auto layout = Layout(true);
+        if (focus.control != island::Control::Slider && focus.control != island::Control::Monitor) return;
+        auto layout = Layout();
         if (focus.monitor >= layout.rows.size()) return;
         const auto& row = layout.rows[focus.monitor];
         if (row.label.top < layout.viewport.top) scroll -= layout.viewport.top - row.label.top;
@@ -310,14 +307,14 @@ struct PopupView::Impl {
     }
     std::vector<island::Target> FocusOrder() const {
         std::vector<island::Target> order;
-        const auto layout = Layout(expanded);
+        const auto layout = Layout();
         for (const auto& row : layout.rows) {
             if (Adjustable(row.index)) order.push_back({island::Control::Slider, row.index});
         }
-        if (expanded) {
+        {
             order.push_back({island::Control::Software}); order.push_back({island::Control::Hardware});
         }
-        order.push_back({island::Control::Power}); order.push_back({island::Control::Expand});
+        order.push_back({island::Control::Power});
         return order;
     }
     void MoveFocus(bool backwards) {
@@ -327,11 +324,6 @@ struct PopupView::Impl {
         index = backwards ? (index + order.size() - 1) % order.size() : (index + 1) % order.size();
         focus = order[index]; EnsureFocusVisible(); AccessibleName(); RequestFrame();
         NotifyWinEvent(EVENT_OBJECT_FOCUS, window, OBJID_WINDOW, CHILDID_SELF);
-    }
-    void Expand(bool value) {
-        FinishDrag(); expanded = value; scroll = 0;
-        focus = {island::Control::Slider, Primary()}; hover = {}; Tooltip(false);
-        Targets(); if (!Animate()) Position(); AccessibleName();
     }
     void Activate(island::Target control) {
         CommitBrightness();
@@ -347,7 +339,6 @@ struct PopupView::Impl {
             if (actions.setMode) actions.setMode(state.mode);
             break;
         case island::Control::Monitor: SelectSliderTarget(control.monitor); break;
-        case island::Control::Expand: Expand(!expanded); break;
         case island::Control::Slider:
         case island::Control::None: break;
         }
@@ -359,11 +350,9 @@ PopupView::PopupView(HINSTANCE instance, PopupActions actions) : m_impl(std::mak
 PopupView::~PopupView() = default;
 HWND PopupView::GetHWnd() const { return m_impl->window; }
 bool PopupView::IsVisible() const { return m_impl->window && IsWindowVisible(m_impl->window); }
-bool PopupView::IsExpanded() const { return m_impl->expanded; }
-island::Layout PopupView::GetLayout() const { return m_impl->Layout(m_impl->expanded); }
+island::Layout PopupView::GetLayout() const { return m_impl->Layout(); }
 HRESULT PopupView::LastRenderError() const { return m_impl->renderError; }
 island::Preferences PopupView::GetPreferences() const { return m_impl->preferences; }
-void PopupView::SetExpanded(bool expanded) { m_impl->Expand(expanded); }
 
 LRESULT CALLBACK PopupView::WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     PopupView* popup = reinterpret_cast<PopupView*>(GetWindowLongPtrW(window, GWLP_USERDATA));
@@ -410,7 +399,9 @@ void PopupView::Toggle(POINT monitorPoint, bool keyboardInvoked) {
     auto& r = *m_impl;
     if (!r.window) return;
     if (IsVisible() && !r.hiding) { Hide(true); return; }
-    r.MeasureMonitor(true); r.Targets(); r.Position();
+    r.MeasureMonitor(true); r.Targets();
+    if (!IsVisible()) { r.width.Snap(r.width.Target()); r.height.Snap(r.height.Target()); }
+    r.Position();
     if (!r.renderer) {
         const HRESULT result = r.InitializeRenderer();
         if (FAILED(result)) { r.GraphicsFailure(result); return; }
@@ -433,11 +424,11 @@ void PopupView::Hide(bool animated) {
     r.UnregisterShortcuts();
     r.FinishDrag(); r.Tooltip(false);
     if (animated && r.Animate() && IsVisible() && r.renderer) {
-        r.hiding = true; r.visibility.Target(0.0); r.Expand(false);
+        r.hiding = true; r.visibility.Target(0.0); r.RequestFrame();
     } else {
-        r.hiding = false; r.visibility.Snap(0); r.expanded = false;
-        r.width.Snap(std::min(island::kCompactWidth, r.maximumWidth));
-        r.height.Snap(island::kCompactHeight); r.expansion.Snap(0);
+        r.hiding = false; r.visibility.Snap(0);
+        r.width.Snap(std::min(island::kWidth, r.maximumWidth));
+        r.height.Snap(island::PanelHeight(r.state.monitors.size(), r.maximumHeight, r.maximumWidth));
         r.keyboardMode = false;
         ShowWindow(r.window, SW_HIDE); r.dirty = false; r.lastFrame = {};
         KillTimer(r.window, kGraphicsTimer);
@@ -482,7 +473,7 @@ void PopupView::SetState(PopupState state) {
     r.mode.Target(r.state.mode == BrightnessMode::Hardware ? 1.0 : 0.0);
     if (!r.window) return;
     r.MeasureMonitor(true); r.Targets();
-    r.scroll = std::clamp(r.scroll, 0.0f, r.Layout(true).MaximumScroll());
+    r.scroll = std::clamp(r.scroll, 0.0f, r.Layout().MaximumScroll());
     r.Tooltip(false); r.AccessibleName(); if (IsVisible()) r.Position();
 }
 void PopupView::SetPreferences(island::Preferences preferences) {
@@ -505,7 +496,7 @@ void PopupView::RenderFrame() {
     auto advance = [&](island::Spring& spring, double epsilon = 0.001) {
         if (r.Animate()) spring.Advance(seconds, epsilon); else spring.Snap(spring.Target());
     };
-    advance(r.width, 0.05); advance(r.height, 0.05); advance(r.expansion); advance(r.visibility);
+    advance(r.width, 0.05); advance(r.height, 0.05); advance(r.visibility);
     advance(r.mode); advance(r.feedback);
     for (auto& [id, motion] : r.rows) {
         advance(motion.slider, 0.05); advance(motion.number);
@@ -513,11 +504,9 @@ void PopupView::RenderFrame() {
     }
     r.Position();
     island::Frame frame;
-    frame.state = &r.state; frame.compact = r.Layout(false); frame.expanded = r.Layout(true);
-    frame.expansion = static_cast<float>(std::clamp(r.expansion.Value(), 0.0, 1.0));
+    frame.state = &r.state; frame.layout = r.Layout();
     frame.opacity = static_cast<float>(std::clamp(r.visibility.Value(), 0.0, 1.0));
-    frame.radius = std::lerp(static_cast<float>(r.height.Value()) * 0.5f,
-                            static_cast<float>(r.height.Value()) * 0.14f, frame.expansion);
+    frame.radius = std::min(32.0f, static_cast<float>(r.height.Value()) * 0.14f);
     frame.modePosition = static_cast<float>(r.mode.Value());
     for (const auto& monitor : r.state.monitors) {
         const auto& motion = r.rows.at(monitor.id);
@@ -545,9 +534,8 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
     case WM_NCHITTEST: {
         POINT pixel{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}; ScreenToClient(window, &pixel);
         const auto point = r.Mouse(MAKELPARAM(pixel.x, pixel.y));
-        const float e = static_cast<float>(r.expansion.Value());
-        const float radius = static_cast<float>(r.height.Value()) * std::lerp(0.5f, 0.14f, e);
-        return island::InsideSquircle(point, r.Layout(false).shell, radius) ? HTCLIENT : HTTRANSPARENT;
+        const float radius = std::min(32.0f, static_cast<float>(r.height.Value()) * 0.14f);
+        return island::InsideSquircle(point, r.Layout().shell, radius) ? HTCLIENT : HTTRANSPARENT;
     }
     case WM_DPICHANGED:
         r.dpi = HIWORD(wParam); r.MeasureMonitor(false); r.Targets(); r.Position(); r.lastFrame = {};
@@ -584,7 +572,7 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
     case WM_MOUSEMOVE: {
         const auto point = r.Mouse(lParam);
         if (r.dragging) r.DragTo(point.x, r.pressed.monitor);
-        else r.Hover(r.InteractiveLayout().Hit(point));
+        else r.Hover(r.Layout().Hit(point));
         if (!r.tracking) {
             TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, window, 0}; r.tracking = TrackMouseEvent(&track) != FALSE;
         }
@@ -593,7 +581,7 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
     case WM_MOUSELEAVE: r.tracking = false; r.Hover({}); return 0;
     case WM_LBUTTONDOWN: {
         r.Tooltip(false);
-        const auto point = r.Mouse(lParam); const auto inputLayout = r.InteractiveLayout(); const auto hit = inputLayout.Hit(point);
+        const auto point = r.Mouse(lParam); const auto inputLayout = r.Layout(); const auto hit = inputLayout.Hit(point);
         if (hit.control == island::Control::None || (hit.control == island::Control::Slider && !r.Adjustable(hit.monitor))) return 0;
         r.focus = hit; r.pressed = hit; r.feedback.Target(0.97);
         if (hit.control == island::Control::Slider && hit.monitor < r.state.monitors.size()) {
@@ -602,14 +590,14 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
             const auto current = std::ranges::find_if(r.state.monitors, [&id](const auto& monitor) { return monitor.id == id; });
             if (current == r.state.monitors.end()) { r.pressed = {}; return 0; }
             r.pressed.monitor = static_cast<size_t>(current - r.state.monitors.begin());
-            r.dragging = true; r.dragCompact = !inputLayout.expanded; r.dragId = id;
+            r.dragging = true; r.dragId = id;
             SetCapture(window); r.DragTo(point.x, r.pressed.monitor);
         } else SetCapture(window);
         r.AccessibleName(); r.RequestFrame(); return 0;
     }
     case WM_LBUTTONUP: {
         const auto pressed = r.pressed; const bool dragging = r.dragging;
-        const auto hit = r.InteractiveLayout().Hit(r.Mouse(lParam));
+        const auto hit = r.Layout().Hit(r.Mouse(lParam));
         r.FinishDrag(); if (!dragging && pressed == hit) r.Activate(pressed);
         return 0;
     }
@@ -618,20 +606,13 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
         return 0;
     case WM_CANCELMODE: r.FinishDrag(); return 0;
     case WM_MOUSEWHEEL:
-        if (r.expanded) {
-            r.scroll = std::clamp(r.scroll - static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA * island::kRowStride,
-                                  0.0f, r.Layout(true).MaximumScroll());
-            r.Hover({}); r.RequestFrame();
-        } else if (!r.state.monitors.empty()) {
-            r.SelectSliderTarget(r.Primary());
-            r.DisplayBrightness(r.Primary(), r.state.monitors[r.Primary()].brightness + GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA * 5, false);
-        }
-        return 0;
+        r.scroll = std::clamp(r.scroll - static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA * island::kRowStride,
+                              0.0f, r.Layout().MaximumScroll());
+        r.Hover({}); r.RequestFrame(); return 0;
     case WM_KEYDOWN:
         r.keyboardMode = true;
-        if (wParam == VK_ESCAPE) { if (r.expanded) r.Expand(false); else Hide(true); return 0; }
+        if (wParam == VK_ESCAPE) { Hide(true); return 0; }
         if (wParam == VK_TAB) { r.MoveFocus((GetKeyState(VK_SHIFT) & 0x8000) != 0); return 0; }
-        if (wParam == 'E') { r.Expand(!r.expanded); return 0; }
         if (wParam == VK_SPACE || wParam == VK_RETURN) { r.Activate(r.focus); return 0; }
         if (r.focus.control == island::Control::Slider) {
             if (!r.Adjustable(r.focus.monitor)) return 0;

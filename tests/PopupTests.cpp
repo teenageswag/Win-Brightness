@@ -74,7 +74,6 @@ int main() try {
         std::printf("Idle CPU, sample %d over 1 second: %.3f ms\n", sample + 1,
                     static_cast<double>(CpuTicks() - idleStart) / 10000.0);
     }
-    popup.SetExpanded(true);
     const auto fiveRows = popup.GetLayout();
     Check(fiveRows.MaximumScroll() == 2 * island::kRowStride, "five visible monitors and overflow scroll");
     popup.HandleMessage(popup.GetHWnd(), WM_KEYDOWN, VK_RIGHT, 0);
@@ -159,15 +158,6 @@ int main() try {
     Check(actual.top == monitor.rcMonitor.top && actual.right - actual.left == 678, "DPI preserves top anchor and DIP width");
     popup.HandleMessage(popup.GetHWnd(), WM_DPICHANGED, MAKELONG(96, 96), reinterpret_cast<LPARAM>(&suggested));
     popup.SetPreferences({island::Theme::Light, false, true});
-    popup.SetExpanded(false); Settle(popup); popup.SetExpanded(true);
-    for (int i = 0; i < 3; ++i) {
-        HANDLE frame = popup.FrameWaitHandle();
-        Check(frame && WaitForSingleObject(frame, 2000) == WAIT_OBJECT_0, "morph frame"); popup.RenderFrame();
-    }
-    const float beforeReverse = popup.GetLayout().shell.Width();
-    popup.SetExpanded(false);
-    Check(popup.GetLayout().shell.Width() == beforeReverse, "morph reversal starts at current presentation");
-    Settle(popup);
     popup.Hide(true); popup.Toggle({0, 0}); Settle(popup);
     Check(popup.IsVisible(), "closing animation can be interrupted");
     popup.Hide();

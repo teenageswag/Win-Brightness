@@ -186,15 +186,7 @@ struct Renderer::Impl {
             ShapeFill(rect, std::min(12.0f, rect.Height() * 0.5f), palette.text, 1.0f, true);
         }
     }
-    void Chevron(Rect rect, bool up, D2D1_COLOR_F color) {
-        const float x = (rect.left + rect.right) * 0.5f, y = (rect.top + rect.bottom) * 0.5f;
-        brush->SetColor(color);
-        const float sign = up ? -1.0f : 1.0f;
-        context->DrawLine(D2D1::Point2F(x - 4, y - 2 * sign), D2D1::Point2F(x, y + 2 * sign), brush.Get(), 1.5f);
-        context->DrawLine(D2D1::Point2F(x, y + 2 * sign), D2D1::Point2F(x + 4, y - 2 * sign), brush.Get(), 1.5f);
-    }
-
-    void Slider(const Row& row, const Frame& frame, const Palette& palette, bool compact) {
+    void Slider(const Row& row, const Frame& frame, const Palette& palette) {
         const PopupState& state = *frame.state;
         const bool selected = row.index < state.monitors.size() && (state.mode == BrightnessMode::Software ||
             (state.monitors[row.index].hardwareBrightness && state.monitors[row.index].hardwareStatus == HardwareStatus::Available));
@@ -208,7 +200,7 @@ struct Renderer::Impl {
         fill.right = fill.left + std::clamp(railValue / 100.0f, 0.0f, 1.0f) * fill.Width();
         auto accent = palette.fill; accent.a *= alpha;
         if (selected) ShapeFill(fill, std::min(fill.Height() * 0.5f, fill.Width() * 0.5f), accent);
-        if (!compact) {
+        {
             wchar_t percent[16]{};
             if (selected) swprintf_s(percent, L"%d%%", percentValue);
             else swprintf_s(percent, L"\x2014");
@@ -231,26 +223,7 @@ struct Renderer::Impl {
         layer.opacity = alpha;
         context->PushLayer(layer, nullptr);
         const auto& state = *frame.state;
-        if (!layout.expanded) {
-            const auto& row = layout.rows.front();
-            std::wstring name = row.index < state.monitors.size() ? state.monitors[row.index].name : L"No displays";
-            Label(name, row.label, 13, DWRITE_FONT_WEIGHT_MEDIUM, palette.text);
-            Slider(row, frame, palette, true);
-            wchar_t value[16]{};
-            if (row.index < state.monitors.size())
-                swprintf_s(value, L"%d%%", state.monitors[row.index].brightness);
-            else swprintf_s(value, L"\x2014");
-            Label(value, {layout.shell.right - 94.0f, 18.0f,
-                          layout.shell.right - 44.0f, 46.0f},
-                  20, DWRITE_FONT_WEIGHT_SEMI_BOLD, state.enabled ? palette.text : palette.muted, true);
-            ShapeFill(layout.power, 16, palette.surface, Scale({Control::Power}, frame));
-            brush->SetColor(state.enabled ? palette.text : palette.muted);
-            context->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(31, 33), 6, 6), brush.Get(), 1.5f);
-            brush->SetColor(palette.surface);
-            context->FillRectangle(D2D1::RectF(28, 24, 34, 30), brush.Get());
-            brush->SetColor(state.enabled ? palette.text : palette.muted);
-            context->DrawLine(D2D1::Point2F(31, 24), D2D1::Point2F(31, 32), brush.Get(), 1.5f);
-        } else {
+        {
             context->PushAxisAlignedClip(Native(layout.viewport), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             for (const auto& row : layout.rows) {
                 if (row.slider.bottom < layout.viewport.top || row.label.top > layout.viewport.bottom) continue;
@@ -266,7 +239,7 @@ struct Renderer::Impl {
                     Label(status, {row.label.right - 78, row.label.top, row.label.right, row.label.bottom},
                           12, DWRITE_FONT_WEIGHT_NORMAL, failed || unsupported ? palette.error : palette.muted, true);
                 }
-                Slider(row, frame, palette, false);
+                Slider(row, frame, palette);
                 Focus(row.label, {Control::Monitor, row.index}, frame, palette);
             }
             if (state.monitors.empty()) {
@@ -300,9 +273,6 @@ struct Renderer::Impl {
             Focus(layout.hardware, {Control::Hardware}, frame, palette);
         }
         Focus(layout.power, {Control::Power}, frame, palette);
-        if (frame.hot.control == Control::Expand) ShapeFill(layout.expand, 12, palette.surface, frame.hotScale);
-        Chevron(layout.expand, layout.expanded, palette.muted);
-        Focus(layout.expand, {Control::Expand}, frame, palette);
         context->PopLayer();
     }
 
@@ -379,8 +349,8 @@ HRESULT Renderer::Initialize(HWND window, HINSTANCE module, UINT dpi, float maxi
 HRESULT Renderer::Resize(UINT dpi, float maximumHeight) {
     auto& r = *m_impl;
     const float scale = static_cast<float>(dpi) / 96.0f;
-    const UINT width = static_cast<UINT>(std::ceil((kExpandedWidth + kShadowMargin * 2) * scale));
-    const UINT height = static_cast<UINT>(std::ceil((std::max(maximumHeight, kCompactHeight) + kShadowMargin) * scale));
+    const UINT width = static_cast<UINT>(std::ceil((kWidth + kShadowMargin * 2) * scale));
+    const UINT height = static_cast<UINT>(std::ceil((std::max(maximumHeight, kMinimumHeight) + kShadowMargin) * scale));
     r.dpi = dpi;
     r.canvasWidth = static_cast<float>(width) / scale;
     r.context->SetDpi(static_cast<float>(dpi), static_cast<float>(dpi));
@@ -426,7 +396,7 @@ HRESULT Renderer::Draw(const Frame& frame, const wchar_t* snapshotPath) {
     auto& r = *m_impl;
     if (!frame.state || !r.target) return E_UNEXPECTED;
     r.shapeCursor = 0; r.textCursor = 0; r.drawingError = S_OK;
-    const Rect body = frame.compact.shell;
+    const Rect body = frame.layout.shell;
     const auto palette = MakePalette(frame.preferences.theme == Theme::Light ||
         (frame.preferences.theme == Theme::System && r.systemLight), r.highContrast,
         frame.preferences.translucent && r.systemTransparency);
@@ -462,10 +432,7 @@ HRESULT Renderer::Draw(const Frame& frame, const wchar_t* snapshotPath) {
     const auto layer = D2D1::LayerParameters1(Native(body), bodyGeometry,
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::Matrix3x2F::Identity(), 1.0f);
     r.context->PushLayer(layer, nullptr);
-    r.Content(frame.compact, frame, palette, 1.0f - frame.expansion);
-    r.context->SetTransform(D2D1::Matrix3x2F::Translation(left, (1.0f - frame.expansion) * 6.0f));
-    r.Content(frame.expanded, frame, palette, frame.expansion);
-    r.context->SetTransform(D2D1::Matrix3x2F::Translation(left, 0));
+    r.Content(frame.layout, frame, palette, 1.0f);
     r.context->PopLayer();
     r.ShapeFill({0.5f, 0.5f, body.right - 0.5f, body.bottom - 0.5f},
                 std::max(0.0f, frame.radius - 0.5f), palette.border, 1.0f, true);
