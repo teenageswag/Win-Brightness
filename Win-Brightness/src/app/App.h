@@ -31,6 +31,7 @@ private:
     void SaveSettings();
     void ReportPersistenceResult(const SettingsResult& result, bool autostart);
     void SetBrightness(int percent);
+    void SetMonitorBrightness(const std::wstring& id, int percent);
     void SetBrightnessMode(BrightnessMode mode);
     void SetEnabled(bool enabled);
     void SetMonitorSelection(MonitorSelection selection);

@@ -78,12 +78,14 @@ bool App::Init() {
 
     m_state = m_settings.Load();
     m_savedState = m_state;
+    m_state.monitors = {}; // The UI now targets every display independently.
     m_autostartEnabled = m_settings.IsAutostartEnabled();
 
     m_controller.SetBrightnessMode(m_state.mode);
     m_controller.SetMonitorSelection(m_state.monitors);
     m_controller.SetEnabled(m_state.enabled);
     m_controller.SetBrightness(m_state.brightness);
+    m_controller.SetMonitorBrightnessValues(m_state.monitorBrightness);
     if (!CreateMsgWindow()) {
         return false;
     }
@@ -93,6 +95,7 @@ bool App::Init() {
 
     PopupActions actions;
     actions.setBrightness = [this](int brightness) { SetBrightness(brightness); };
+    actions.setMonitorBrightness = [this](const std::wstring& id, int value) { SetMonitorBrightness(id, value); };
     actions.setEnabled = [this](bool enabled) { SetEnabled(enabled); };
     actions.setMode = [this](BrightnessMode mode) { SetBrightnessMode(mode); };
     actions.setSelection = [this](MonitorSelection selection) { SetMonitorSelection(std::move(selection)); };
@@ -217,8 +220,8 @@ void App::UpdateTrayIcon() {
     icon.uID = kTrayIconId;
     icon.uFlags = NIF_TIP;
     if (m_state.enabled) {
-        swprintf_s(icon.szTip, L"trenches · %d%% · %zu display%s",
-                   m_state.brightness, targetCount, targetCount == 1 ? L"" : L"s");
+        swprintf_s(icon.szTip, L"trenches · %zu display%s · Ctrl+Alt+B",
+                   targetCount, targetCount == 1 ? L"" : L"s");
     } else {
         swprintf_s(icon.szTip, L"trenches · Paused · Ctrl+Alt+B");
     }
@@ -308,7 +311,7 @@ void App::ApplySoftwareBrightness() {
     std::erase_if(monitors, [this](const MonitorInfo& monitor) {
         return !m_state.monitors.Contains(monitor.id) || monitor.hardwareActive;
     });
-    m_software.ApplyBrightness(m_state.brightness, monitors);
+    m_software.ApplyBrightness(monitors);
     // Keep the controls above the newly positioned topmost overlays.
     if (m_popup && m_popup->IsVisible()) {
         SetWindowPos(m_popup->GetHWnd(), HWND_TOPMOST, 0, 0, 0, 0,
@@ -352,6 +355,13 @@ void App::SetBrightness(int percent) {
     SaveSettings();
     UpdateTrayIcon();
     SyncPopup();
+}
+
+void App::SetMonitorBrightness(const std::wstring& id, int percent) {
+    if (!m_controller.SetMonitorBrightness(id, percent)) { SyncPopup(); return; }
+    m_state.monitorBrightness[id] = ClampBrightness(percent);
+    ApplySoftwareBrightness();
+    SaveSettings(); UpdateTrayIcon(); SyncPopup();
 }
 
 void App::SetBrightnessMode(BrightnessMode mode) {

@@ -120,10 +120,17 @@ int main() try {
     settings.brightness = 37;
     settings.mode = BrightnessMode::Hardware;
     settings.monitors = {false, {L"first", L"second"}};
+    settings.monitorBrightness = {{L"first", 20}, {L"second", 80}};
     Check(store.Save(settings).has_value(), "report successful settings save");
     const auto loaded = store.Load();
     Check(loaded.brightness == 37 && loaded.mode == BrightnessMode::Hardware &&
-          loaded.monitors.ids == settings.monitors.ids, "round-trip settings");
+          loaded.monitors.ids == settings.monitors.ids && loaded.monitorBrightness == settings.monitorBrightness,
+          "round-trip settings and independent monitor targets");
+    const wchar_t malformedTargets[] = L"first\0" L"0\0" L"second\0" L"80\0" L"third\0" L"-1\0"
+        L"fourth\0" L"100\0" L"orphan\0";
+    registry.Write(settingsPath, L"MonitorBrightness", REG_MULTI_SZ, malformedTargets, sizeof(malformedTargets));
+    Check(store.Load().monitorBrightness == MonitorBrightnessValues{{L"second", 80}, {L"fourth", 100}},
+          "ignore malformed target pairs and retain valid independent values");
     {
         DenySettingsWrites denied;
         const auto result = store.Save(settings);

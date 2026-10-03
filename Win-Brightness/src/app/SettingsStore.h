@@ -11,6 +11,7 @@ struct AppSettings {
     BrightnessMode mode = BrightnessMode::Software;
     bool enabled = true;
     MonitorSelection monitors;
+    MonitorBrightnessValues monitorBrightness;
 };
 
 class SettingsStore {

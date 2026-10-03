@@ -18,6 +18,7 @@ struct PopupState {
 
 struct PopupActions {
     std::function<void(int)> setBrightness;
+    std::function<void(const std::wstring&, int)> setMonitorBrightness;
     std::function<void(bool)> setEnabled;
     std::function<void(BrightnessMode)> setMode;
     std::function<void(MonitorSelection)> setSelection;

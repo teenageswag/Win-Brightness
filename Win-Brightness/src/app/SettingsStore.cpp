@@ -10,6 +10,7 @@ namespace {
     constexpr const wchar_t* kEnabledValue = L"Enabled";
     constexpr const wchar_t* kAllMonitorsValue = L"AllMonitors";
     constexpr const wchar_t* kMonitorIdsValue = L"MonitorIds";
+    constexpr const wchar_t* kMonitorBrightnessValue = L"MonitorBrightness";
     constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
     constexpr const wchar_t* kRunValue = L"trenches";
 
@@ -126,6 +127,18 @@ AppSettings SettingsStore::Load() const {
         settings.monitors.all = value != 0;
     }
     settings.monitors.ids = ReadStringList(kMonitorIdsValue);
+    const auto values = ReadStringList(kMonitorBrightnessValue);
+    // Alternating stable display ID / decimal target avoids treating device IDs
+    // as registry paths. Ignore malformed pairs without discarding valid peers.
+    for (size_t i = 0; i + 1 < values.size(); i += 2) {
+        const auto& percent = values[i + 1];
+        if (percent.empty() || percent.size() > 3 ||
+            !std::ranges::all_of(percent, [](wchar_t c) { return c >= L'0' && c <= L'9'; })) continue;
+        int valuePercent = 0;
+        for (wchar_t c : percent) valuePercent = valuePercent * 10 + c - L'0';
+        if (valuePercent >= kMinBrightness && valuePercent <= kMaxBrightness &&
+            !values[i].empty()) settings.monitorBrightness[values[i]] = valuePercent;
+    }
 
     return settings;
 }
@@ -136,7 +149,8 @@ SettingsResult SettingsStore::Save(const AppSettings& settings, const AppSetting
     const bool enabled = !previous || settings.enabled != previous->enabled;
     const bool all = !previous || settings.monitors.all != previous->monitors.all;
     const bool ids = !previous || settings.monitors.ids != previous->monitors.ids;
-    if (!brightness && !mode && !enabled && !all && !ids) return {};
+    const bool monitorBrightness = !previous || settings.monitorBrightness != previous->monitorBrightness;
+    if (!brightness && !mode && !enabled && !all && !ids && !monitorBrightness) return {};
 
     RegistryKey key;
     const LSTATUS opened = RegCreateKeyExW(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0,
@@ -154,7 +168,18 @@ SettingsResult SettingsStore::Save(const AppSettings& settings, const AppSetting
     if (all) {
         if (auto result = WriteDword(key.Get(), kAllMonitorsValue, settings.monitors.all ? 1u : 0u); !result) return result;
     }
-    return ids ? WriteStringList(key.Get(), kMonitorIdsValue, settings.monitors.ids) : SettingsResult{};
+    if (ids) {
+        if (auto result = WriteStringList(key.Get(), kMonitorIdsValue, settings.monitors.ids); !result) return result;
+    }
+    if (monitorBrightness) {
+        std::vector<std::wstring> values;
+        for (const auto& [id, percent] : settings.monitorBrightness) {
+            if (id.empty() || id.find(L'\0') != std::wstring::npos) return std::unexpected(ERROR_INVALID_DATA);
+            values.push_back(id); values.push_back(std::to_wstring(ClampBrightness(percent)));
+        }
+        return WriteStringList(key.Get(), kMonitorBrightnessValue, values);
+    }
+    return {};
 } catch (const std::bad_alloc&) {
     return std::unexpected(ERROR_NOT_ENOUGH_MEMORY);
 }
