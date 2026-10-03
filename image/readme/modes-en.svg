@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:lang="en" width="1040" height="480" viewBox="0 0 1040 480" role="img" aria-labelledby="title desc">
+  <title id="title">Two ways to dim</title><desc id="desc">Software adds a dark overlay while the physical backlight stays unchanged. Hardware changes brightness through DDC/CI.</desc>
+  <defs>
+    <linearGradient id="bright" x2="1" y2="1"><stop stop-color="#e5e7ec"/><stop offset="1" stop-color="#c7ccd5"/></linearGradient>
+    <linearGradient id="dim" x2="1" y2="1"><stop stop-color="#777c87"/><stop offset="1" stop-color="#4c515b"/></linearGradient>
+  </defs>
+  <g font-family="Segoe UI,Arial,sans-serif">
+    <rect x="0.5" y="0.5" width="503" height="479" rx="24" fill="#f5f5f7" stroke="#e9e9ed"/>
+    <rect x="536.5" y="0.5" width="503" height="479" rx="24" fill="#f5f5f7" stroke="#e9e9ed"/>
+    <text x="40" y="59" font-size="26" font-weight="600" fill="#171719">Software</text>
+    <text x="576" y="59" font-size="26" font-weight="600" fill="#171719">Hardware</text>
+    <text x="40" y="95" font-size="18" fill="#62626b">Dimming over the picture</text>
+    <text x="576" y="95" font-size="18" fill="#62626b">Brightness through DDC/CI</text>
+    <g transform="translate(6 0)">
+    <rect x="56" y="152" width="380" height="221" rx="13" fill="#252529"/>
+    <rect x="65" y="161" width="362" height="200" rx="5" fill="url(#bright)"/>
+    <path d="M66 332C155 218 225 372 323 266S414 208 426 233V360H66z" fill="#fff" opacity=".28"/>
+    <rect x="65" y="161" width="362" height="200" rx="5" fill="#080809" opacity=".4"/>
+    <rect x="218" y="373" width="56" height="19" fill="#c3c3ca"/>
+    <rect x="185" y="391" width="122" height="5" rx="2.5" fill="#b4b4bd"/>
+    <rect x="141" y="240" width="210" height="38" rx="19" fill="#080809" opacity=".75"/><text x="246" y="265" fill="#f5f5f7" text-anchor="middle" font-size="17">Overlay</text>
+    <text x="246" y="445" text-anchor="middle" fill="#62626b" font-size="17">Backlight unchanged</text>
+  </g>
+    <g transform="translate(542 0)">
+    <rect x="56" y="152" width="380" height="221" rx="13" fill="#252529"/>
+    <rect x="65" y="161" width="362" height="200" rx="5" fill="url(#dim)"/>
+    <path d="M66 332C155 218 225 372 323 266S414 208 426 233V360H66z" fill="#fff" opacity=".08"/>
+
+    <rect x="218" y="373" width="56" height="19" fill="#c3c3ca"/>
+    <rect x="185" y="391" width="122" height="5" rx="2.5" fill="#b4b4bd"/>
+    <text x="246" y="271" fill="#f5f5f7" text-anchor="middle" font-size="19">DDC/CI</text>
+    <text x="246" y="445" text-anchor="middle" fill="#62626b" font-size="17">Display brightness control</text>
+  </g>
+  </g>
+</svg>
