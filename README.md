@@ -78,7 +78,7 @@ Monitor commands run in the background. Temporary failures get up to three retri
 
 ## Controls
 
-Drag a slider to change that display. Use the mouse wheel to scroll the display list. The hide deadline pauses while dragging or using the panel’s context menu.
+Drag a slider or turn the mouse wheel over it to adjust that display. Each wheel step changes brightness by 1 percentage point; hold Shift for 5. Wheel over display names or the gaps between rows to scroll the list. The hide deadline pauses while dragging or using the panel’s context menu.
 
 For keyboard control, open the panel with **Ctrl + Alt + B**. The following shortcuts are active until it closes:
 

@@ -1,6 +1,7 @@
 #include "ui/PopupView.h"
 #include <cstdio>
 #include <stdexcept>
+#include <windowsx.h>
 
 void Check(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
 LPARAM At(island::Rect rect, float fraction = 0.5f, float scale = 1.0f) {
@@ -10,6 +11,12 @@ LPARAM At(island::Rect rect, float fraction = 0.5f, float scale = 1.0f) {
 void Click(PopupView& popup, island::Rect rect) {
     popup.HandleMessage(popup.GetHWnd(), WM_LBUTTONDOWN, MK_LBUTTON, At(rect));
     popup.HandleMessage(popup.GetHWnd(), WM_LBUTTONUP, 0, At(rect));
+}
+void Wheel(PopupView& popup, island::Rect rect, short delta, WORD keys = 0, float scale = 1.0f) {
+    const LPARAM client = At(rect, 0.5f, scale);
+    POINT point{GET_X_LPARAM(client), GET_Y_LPARAM(client)};
+    Check(ClientToScreen(popup.GetHWnd(), &point) != FALSE, "convert wheel coordinates to screen pixels");
+    popup.HandleMessage(popup.GetHWnd(), WM_MOUSEWHEEL, MAKEWPARAM(keys, static_cast<WORD>(delta)), MAKELPARAM(point.x, point.y));
 }
 void Pump() {
     MSG message{};
@@ -102,6 +109,45 @@ int main() try {
     }
     const auto fiveRows = popup.GetLayout();
     Check(fiveRows.MaximumScroll() == 2 * island::kRowStride, "five visible monitors and overflow scroll");
+    commits = 0;
+    Wheel(popup, fiveRows.rows[1].slider, WHEEL_DELTA / 2);
+    popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
+    Check(commits == 0, "partial high-resolution wheel input waits for a complete step");
+    Wheel(popup, fiveRows.rows[1].slider, WHEEL_DELTA / 2);
+    Check(commits == 0, "wheel brightness uses the asynchronous input throttle");
+    popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
+    Check(commits == 1 && committedId == L"1" && committed == 73, "wheel changes only the hovered display");
+    popup.SetState(saved); commits = 0;
+    Wheel(popup, fiveRows.rows[1].slider, WHEEL_DELTA / 2);
+    Wheel(popup, fiveRows.rows[0].slider, WHEEL_DELTA / 2);
+    popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
+    Check(commits == 0, "partial wheel steps do not carry across monitor IDs");
+    Wheel(popup, fiveRows.rows[0].slider, WHEEL_DELTA / 2);
+    popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
+    Check(commits == 1 && committedId == L"0" && committed == 73, "new hovered display accumulates its own wheel step");
+    popup.SetState(saved); commits = 0;
+    Wheel(popup, fiveRows.rows[1].slider, -WHEEL_DELTA, MK_SHIFT);
+    popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
+    Check(commits == 1 && committedId == L"1" && committed == 67, "Shift wheel adjusts brightness by five points");
+    auto wheelHardware = saved; wheelHardware.mode = BrightnessMode::Hardware;
+    wheelHardware.monitors[1].hardwareStatus = HardwareStatus::Unsupported;
+    popup.SetState(wheelHardware); commits = 0;
+    Wheel(popup, fiveRows.rows[1].slider, WHEEL_DELTA);
+    popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
+    Check(commits == 0, "wheel skips unavailable hardware displays");
+    popup.SetState(saved);
+    Wheel(popup, popup.GetLayout().rows[0].label, -WHEEL_DELTA);
+    Check(popup.GetLayout().rows[0].label.top == fiveRows.rows[0].label.top - island::kRowStride,
+          "wheel over labels still scrolls the monitor list without an indicator");
+    Wheel(popup, popup.GetLayout().rows[1].label, WHEEL_DELTA);
+    Check(popup.GetLayout().rows[0].label.top == fiveRows.rows[0].label.top, "list can scroll back to its first display");
+    Wheel(popup, popup.GetLayout().rows[0].slider, WHEEL_DELTA / 2);
+    popup.Hide(); popup.Toggle({0, 0}, false);
+    commits = 0;
+    Wheel(popup, popup.GetLayout().rows[0].slider, WHEEL_DELTA / 2);
+    popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
+    Check(commits == 0, "reopening clears partial wheel input");
+    popup.SetState(saved);
     popup.HandleMessage(popup.GetHWnd(), WM_KEYDOWN, VK_RIGHT, 0);
     popup.SetState(saved);
     popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
@@ -184,7 +230,12 @@ int main() try {
     popup.HandleMessage(popup.GetHWnd(), WM_DPICHANGED, MAKELONG(144, 144), reinterpret_cast<LPARAM>(&suggested));
     GetWindowRect(popup.GetHWnd(), &actual);
     Check(actual.top == monitor.rcMonitor.top && actual.right - actual.left == static_cast<LONG>((island::kWidth + 2 * island::kShadowMargin) * 1.5f), "DPI preserves top anchor and DIP width");
+    commits = 0;
+    Wheel(popup, popup.GetLayout().rows[0].slider, -WHEEL_DELTA, 0, 1.5f);
+    popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
+    Check(commits == 1 && committedId == L"0" && committed == 71, "wheel hit testing uses screen coordinates and current DPI");
     popup.HandleMessage(popup.GetHWnd(), WM_DPICHANGED, MAKELONG(96, 96), reinterpret_cast<LPARAM>(&suggested));
+    popup.SetState(saved);
     popup.SetPreferences({island::Theme::Light, false, true});
     popup.Hide(true); popup.Toggle({0, 0}); Settle(popup);
     Check(popup.IsVisible(), "closing animation can be interrupted");

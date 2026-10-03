@@ -55,7 +55,8 @@ struct PopupView::Impl {
     bool dismissTimer = false, mouseRegistered = false, contextMenu = false;
     island::IdleDismissal dismissal;
     std::optional<POINT> lastPointer;
-    std::wstring dragId, tooltipText;
+    std::wstring dragId, tooltipText, wheelId;
+    int wheelRemainder = 0;
     float scroll = 0, maximumHeight = 449, maximumWidth = island::kWidth;
     UINT dpi = 96, graphicsRetries = 0;
     HRESULT renderError = S_OK;
@@ -465,6 +466,7 @@ void PopupView::Toggle(POINT monitorPoint, bool keyboardInvoked) {
         if (FAILED(result)) { r.GraphicsFailure(result); return; }
     }
     r.hiding = false; r.visibility.Target(1.0); r.lastFrame = {};
+    r.wheelId.clear(); r.wheelRemainder = 0;
     r.keyboardMode = keyboardInvoked; r.focus = {island::Control::Slider, r.Primary()};
     ShowWindow(r.window, SW_SHOWNOACTIVATE);
     // Keyboard navigation uses temporary Ctrl+Alt shortcuts, rather than taking
@@ -677,8 +679,9 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
         }
         return 0;
     }
-    case WM_MOUSELEAVE: r.tracking = false; r.Hover({}); return 0;
+    case WM_MOUSELEAVE: r.wheelId.clear(); r.wheelRemainder = 0; r.tracking = false; r.Hover({}); return 0;
     case WM_LBUTTONDOWN: {
+        r.wheelId.clear(); r.wheelRemainder = 0;
         r.ResetDismissal();
         r.Tooltip(false);
         const auto point = r.Mouse(lParam); const auto inputLayout = r.Layout(); const auto hit = inputLayout.Hit(point);
@@ -706,12 +709,40 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
         if (reinterpret_cast<HWND>(lParam) != window) r.FinishDrag();
         return 0;
     case WM_CANCELMODE: r.FinishDrag(); return 0;
-    case WM_MOUSEWHEEL:
+    case WM_MOUSEWHEEL: {
         r.ResetDismissal();
-        r.scroll = std::clamp(r.scroll - static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA * island::kRowStride,
-                              0.0f, r.Layout().MaximumScroll());
-        r.Hover({}); r.RequestFrame(); return 0;
+        if (r.dragging) return 0;
+        // Wheel coordinates are screen pixels, unlike WM_MOUSEMOVE. Invert
+        // the current presentation after converting them to client pixels.
+        POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        if (!ScreenToClient(window, &point)) return 0;
+        const auto hit = r.Layout().Hit(r.ClientPoint(static_cast<float>(point.x), static_cast<float>(point.y)));
+        r.keyboardMode = false;
+        const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+        if (hit.control == island::Control::Slider) {
+            if (!r.Adjustable(hit.monitor)) { r.wheelId.clear(); r.wheelRemainder = 0; return 0; }
+            const auto& monitor = r.state.monitors[hit.monitor];
+            if (r.wheelId != monitor.id) { r.wheelId = monitor.id; r.wheelRemainder = 0; }
+            // Accumulate high-resolution wheel deltas per stable display ID,
+            // so a partial step cannot spill into a different display.
+            r.wheelRemainder += delta;
+            const int steps = r.wheelRemainder / WHEEL_DELTA;
+            r.wheelRemainder %= WHEEL_DELTA;
+            const int increment = (GET_KEYSTATE_WPARAM(wParam) & MK_SHIFT) != 0 ? 5 : 1;
+            r.SelectSliderTarget(hit.monitor);
+            r.DisplayBrightness(hit.monitor, monitor.brightness + steps * increment, false);
+            r.Hover(hit); r.AccessibleName(); r.RequestFrame(); return 0;
+        }
+        r.wheelId.clear(); r.wheelRemainder = 0;
+        if (r.Layout().viewport.Contains(r.ClientPoint(static_cast<float>(point.x), static_cast<float>(point.y)))) {
+            r.scroll = std::clamp(r.scroll - static_cast<float>(delta) / WHEEL_DELTA * island::kRowStride,
+                                  0.0f, r.Layout().MaximumScroll());
+            r.Hover({}); r.RequestFrame();
+        }
+        return 0;
+    }
     case WM_KEYDOWN:
+        r.wheelId.clear(); r.wheelRemainder = 0;
         r.ResetDismissal();
         r.keyboardMode = true;
         if (wParam == VK_ESCAPE) { Hide(true); return 0; }
