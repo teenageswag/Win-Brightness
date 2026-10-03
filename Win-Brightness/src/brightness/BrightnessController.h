@@ -2,10 +2,11 @@
 
 #include "BrightnessTypes.h"
 #include "HardwareBrightness.h"
-#include "SoftwareBrightness.h"
 #include <atomic>
 #include <condition_variable>
+#include <chrono>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -14,11 +15,16 @@ public:
     BrightnessController();
     ~BrightnessController();
 
-    bool Init();
+    static constexpr UINT kMonitorsChangedMessage = WM_APP + 1;
+    static constexpr UINT kHardwareStatusMessage = WM_APP + 2;
+
+    bool Init(HWND notificationWindow);
     void Cleanup();
 
     int GetBrightness() const;
     void SetBrightness(int percent);
+    bool SetMonitorBrightness(const std::wstring& id, int percent);
+    void SetMonitorBrightnessValues(MonitorBrightnessValues values);
 
     void SetEnabled(bool enabled);
     bool IsEnabled() const;
@@ -29,9 +35,10 @@ public:
     void SetMonitorSelection(MonitorSelection selection);
     MonitorSelection GetMonitorSelection() const;
 
-    void RefreshMonitors();
+    void RequestMonitorRefresh();
     std::vector<MonitorInfo> GetMonitors() const;
     bool IsHardwareAvailableForSelection() const;
+    DWORD GetCatalogError() const;
 
 private:
     struct ApplyState {
@@ -42,13 +49,20 @@ private:
         std::vector<MonitorInfo> monitors;
     };
 
-    void QueueApplyLocked();
+    void QueueApplyLocked(bool resetRetry = true);
+    void RefreshMonitors();
     void WorkerThreadProc();
     void ApplyBrightness(const ApplyState& state);
+    void PublishWriteResults(const std::vector<HardwareWriteResult>& results);
+    void PublishWorkerError(DWORD error);
+    void PublishHardwareActivity();
+    void UpdateAppliedMonitorIds();
+    void ScheduleRetryLocked();
     static std::vector<MonitorInfo> ResolveTargets(const ApplyState& state);
     static std::vector<std::wstring> MonitorIds(const std::vector<MonitorInfo>& monitors);
 
     std::atomic<int> m_currentBrightness{kDefaultBrightness};
+    std::atomic_bool m_cancelIo{false};
     mutable std::mutex m_stateMutex;
     std::condition_variable m_workerCv;
     std::thread m_workerThread;
@@ -56,15 +70,24 @@ private:
     bool m_initialized = false;
     bool m_stopWorker = false;
     bool m_applyPending = false;
+    bool m_refreshPending = false;
+    HWND m_notificationWindow = nullptr;
+    std::optional<std::chrono::steady_clock::time_point> m_retryAt;
+    size_t m_retryCount = 0;
+    DWORD m_catalogError = ERROR_SUCCESS;
     bool m_enabled = true;
     BrightnessMode m_mode = BrightnessMode::Software;
     MonitorSelection m_selection;
+    MonitorBrightnessValues m_monitorBrightness;
     std::vector<MonitorInfo> m_monitors;
 
-    bool m_hasApplied = false;
-    BrightnessMode m_appliedMode = BrightnessMode::Software;
+    struct AppliedPhysicalMonitor {
+        std::wstring id;
+        size_t index = 0;
+    };
+    std::vector<AppliedPhysicalMonitor> m_appliedPhysicalMonitors;
+    // IDs with at least one successfully modified physical endpoint.
     std::vector<std::wstring> m_appliedMonitorIds;
 
     HardwareBrightness m_hardware;
-    SoftwareBrightness m_software;
 };

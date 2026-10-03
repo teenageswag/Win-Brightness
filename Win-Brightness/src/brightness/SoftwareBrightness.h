@@ -7,6 +7,7 @@
 class SoftwareBrightness {
 public:
     void ApplyBrightness(int percent, const std::vector<MonitorInfo>& monitors);
+    void ApplyBrightness(const std::vector<MonitorInfo>& monitors);
     void Reset();
 
 private:

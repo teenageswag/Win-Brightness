@@ -9,7 +9,7 @@ BrightnessController::~BrightnessController() {
     Cleanup();
 }
 
-bool BrightnessController::Init() {
+bool BrightnessController::Init(HWND notificationWindow) {
     {
         std::lock_guard lock(m_stateMutex);
         if (m_initialized) {
@@ -17,10 +17,21 @@ bool BrightnessController::Init() {
         }
         m_initialized = true;
         m_stopWorker = false;
+        m_cancelIo.store(false, std::memory_order_relaxed);
+        m_refreshPending = true;
+        m_notificationWindow = notificationWindow;
+        m_retryCount = 0;
+        m_retryAt.reset();
     }
 
-    RefreshMonitors();
-    m_workerThread = std::thread(&BrightnessController::WorkerThreadProc, this);
+    try {
+        m_workerThread = std::thread(&BrightnessController::WorkerThreadProc, this);
+    } catch (const std::system_error&) {
+        std::lock_guard lock(m_stateMutex);
+        m_initialized = false;
+        m_notificationWindow = nullptr;
+        return false;
+    }
     m_workerCv.notify_one();
     return true;
 }
@@ -33,6 +44,7 @@ void BrightnessController::Cleanup() {
         }
         m_initialized = false;
         m_stopWorker = true;
+        m_cancelIo.store(true, std::memory_order_relaxed);
     }
 
     m_workerCv.notify_all();
@@ -40,8 +52,6 @@ void BrightnessController::Cleanup() {
         m_workerThread.join();
     }
 
-    m_software.Reset();
-    m_hardware.ReleaseMonitors();
 }
 
 int BrightnessController::GetBrightness() const {
@@ -52,6 +62,38 @@ void BrightnessController::SetBrightness(int percent) {
     m_currentBrightness.store(ClampBrightness(percent), std::memory_order_relaxed);
     {
         std::lock_guard lock(m_stateMutex);
+        for (auto& [id, value] : m_monitorBrightness) value = ClampBrightness(percent);
+        for (auto& monitor : m_monitors) monitor.brightness = ClampBrightness(percent);
+        QueueApplyLocked();
+    }
+    m_workerCv.notify_one();
+}
+
+bool BrightnessController::SetMonitorBrightness(const std::wstring& id, int percent) {
+    {
+        std::lock_guard lock(m_stateMutex);
+        const auto found = std::ranges::find(m_monitors, id, &MonitorInfo::id);
+        if (found == m_monitors.end() || (m_mode == BrightnessMode::Hardware &&
+            (!found->hardwareBrightness || found->hardwareStatus != HardwareStatus::Available))) return false;
+        const int value = ClampBrightness(percent);
+        m_monitorBrightness[id] = value;
+        found->brightness = value;
+        QueueApplyLocked();
+    }
+    m_workerCv.notify_one();
+    return true;
+}
+
+void BrightnessController::SetMonitorBrightnessValues(MonitorBrightnessValues values) {
+    std::erase_if(values, [](const auto& entry) { return entry.first.empty(); });
+    for (auto& [id, value] : values) value = ClampBrightness(value);
+    {
+        std::lock_guard lock(m_stateMutex);
+        m_monitorBrightness = std::move(values);
+        for (auto& monitor : m_monitors) {
+            const auto found = m_monitorBrightness.find(monitor.id);
+            monitor.brightness = found == m_monitorBrightness.end() ? GetBrightness() : found->second;
+        }
         QueueApplyLocked();
     }
     m_workerCv.notify_one();
@@ -112,16 +154,51 @@ MonitorSelection BrightnessController::GetMonitorSelection() const {
     return m_selection;
 }
 
+void BrightnessController::RequestMonitorRefresh() {
+    {
+        std::lock_guard lock(m_stateMutex);
+        m_refreshPending = true;
+        m_retryCount = 0;
+        m_retryAt.reset();
+    }
+    m_workerCv.notify_one();
+}
+
 void BrightnessController::RefreshMonitors() {
-    std::vector<MonitorInfo> monitors = MonitorCatalog::Enumerate();
-    m_hardware.RefreshMonitors(monitors);
+    auto enumerated = MonitorCatalog::Enumerate();
+    if (!enumerated) {
+        {
+            std::lock_guard lock(m_stateMutex);
+            m_catalogError = enumerated.error();
+            ScheduleRetryLocked();
+        }
+        PostMessageW(m_notificationWindow, kMonitorsChangedMessage, 0, 0);
+        return;
+    }
+    auto monitors = std::move(*enumerated);
+    m_hardware.RefreshMonitors(monitors, &m_cancelIo);
+    if (m_cancelIo.load(std::memory_order_relaxed)) return;
 
     {
         std::lock_guard lock(m_stateMutex);
+        for (auto& monitor : monitors) {
+            const auto value = m_monitorBrightness.find(monitor.id);
+            monitor.brightness = value == m_monitorBrightness.end() ? GetBrightness() : value->second;
+            monitor.hardwareActive =
+                std::ranges::find(m_appliedMonitorIds, monitor.id) != m_appliedMonitorIds.end();
+        }
         m_monitors = std::move(monitors);
-        QueueApplyLocked();
+        m_catalogError = ERROR_SUCCESS;
+        if (std::ranges::any_of(m_monitors, [](const auto& monitor) {
+                return monitor.hardwareStatus == HardwareStatus::Failed &&
+                       !IsUnsupportedHardwareError(monitor.hardwareError);
+            })) {
+            ScheduleRetryLocked();
+        }
+        QueueApplyLocked(false);
     }
     m_workerCv.notify_one();
+    PostMessageW(m_notificationWindow, kMonitorsChangedMessage, 0, 0);
 }
 
 std::vector<MonitorInfo> BrightnessController::GetMonitors() const {
@@ -136,8 +213,26 @@ bool BrightnessController::IsHardwareAvailableForSelection() const {
     });
 }
 
-void BrightnessController::QueueApplyLocked() {
+DWORD BrightnessController::GetCatalogError() const {
+    std::lock_guard lock(m_stateMutex);
+    return m_catalogError;
+}
+
+void BrightnessController::ScheduleRetryLocked() {
+    constexpr std::chrono::milliseconds delays[] = {
+        std::chrono::milliseconds(250), std::chrono::milliseconds(1000), std::chrono::milliseconds(2000)
+    };
+    if (!m_stopWorker && !m_retryAt && m_retryCount < std::size(delays)) {
+        m_retryAt = std::chrono::steady_clock::now() + delays[m_retryCount++];
+    }
+}
+
+void BrightnessController::QueueApplyLocked(bool resetRetry) {
     m_applyPending = true;
+    if (resetRetry) {
+        m_retryCount = 0;
+        m_retryAt.reset();
+    }
 }
 
 void BrightnessController::WorkerThreadProc() {
@@ -145,60 +240,178 @@ void BrightnessController::WorkerThreadProc() {
         ApplyState state;
         {
             std::unique_lock lock(m_stateMutex);
-            m_workerCv.wait(lock, [this] { return m_stopWorker || m_applyPending; });
+            const auto pending = [this] {
+                return m_stopWorker || m_refreshPending || m_applyPending;
+            };
+            if (m_retryAt) {
+                const auto deadline = *m_retryAt;
+                if (!m_workerCv.wait_until(lock, deadline, pending)) {
+                    m_retryAt.reset();
+                    m_refreshPending = true;
+                }
+            } else {
+                m_workerCv.wait(lock, pending);
+            }
             if (m_stopWorker) {
                 break;
             }
 
+            if (m_refreshPending) {
+                m_refreshPending = false;
+                lock.unlock();
+                try {
+                    RefreshMonitors();
+                } catch (const std::bad_alloc&) {
+                    PublishWorkerError(ERROR_NOT_ENOUGH_MEMORY);
+                } catch (...) {
+                    PublishWorkerError(ERROR_GEN_FAILURE);
+                }
+                continue;
+            }
+
             m_applyPending = false;
-            state.brightness = m_currentBrightness.load(std::memory_order_relaxed);
-            state.enabled = m_enabled;
-            state.mode = m_mode;
-            state.selection = m_selection;
-            state.monitors = m_monitors;
+            if (m_catalogError != ERROR_SUCCESS) continue;
+            try {
+                state.brightness = m_currentBrightness.load(std::memory_order_relaxed);
+                state.enabled = m_enabled;
+                state.mode = m_mode;
+                state.selection = m_selection;
+                state.monitors = m_monitors;
+                // Publish in-flight ownership before the first write. The UI may
+                // switch modes while this snapshot is still being applied.
+                for (auto& monitor : m_monitors) {
+                    monitor.hardwareActive =
+                        std::ranges::find(m_appliedMonitorIds, monitor.id) != m_appliedMonitorIds.end() ||
+                        (state.mode == BrightnessMode::Hardware && state.selection.Contains(monitor.id) &&
+                         monitor.hardwareBrightness && monitor.hardwareStatus == HardwareStatus::Available);
+                }
+            } catch (const std::bad_alloc&) {
+                lock.unlock();
+                PublishWorkerError(ERROR_NOT_ENOUGH_MEMORY);
+                continue;
+            }
         }
 
-        ApplyBrightness(state);
+        try {
+            ApplyBrightness(state);
+        } catch (const std::bad_alloc&) {
+            PublishWorkerError(ERROR_NOT_ENOUGH_MEMORY);
+        } catch (...) {
+            PublishWorkerError(ERROR_GEN_FAILURE);
+        }
     }
 
-    m_software.Reset();
+    m_hardware.ReleaseMonitors();
 }
 
 void BrightnessController::ApplyBrightness(const ApplyState& state) {
     const std::vector<MonitorInfo> targets = ResolveTargets(state);
     const std::vector<std::wstring> targetIds = MonitorIds(targets);
 
-    if (m_hasApplied && m_appliedMode == BrightnessMode::Hardware) {
-        std::vector<std::wstring> removedIds;
-        if (state.mode != BrightnessMode::Hardware) {
-            removedIds = m_appliedMonitorIds;
-        } else {
-            const std::unordered_set<std::wstring> currentIds(targetIds.begin(), targetIds.end());
-            for (const std::wstring& previousId : m_appliedMonitorIds) {
-                if (!currentIds.contains(previousId)) {
-                    removedIds.push_back(previousId);
-                }
+    std::vector<std::wstring> removedIds;
+    for (const auto& id : m_appliedMonitorIds) {
+        if (state.mode != BrightnessMode::Hardware ||
+            std::ranges::find(targetIds, id) == targetIds.end()) {
+            removedIds.push_back(id);
+        }
+    }
+    if (!removedIds.empty()) {
+        const auto restored = m_hardware.ApplyBrightness(kMaxBrightness, removedIds, &m_cancelIo);
+        if (m_cancelIo.load(std::memory_order_relaxed)) return;
+        for (const auto& result : restored) {
+            if (result.error != ERROR_SUCCESS) continue;
+            std::erase_if(m_appliedPhysicalMonitors, [&](const auto& physical) {
+                return physical.id == result.monitorId && physical.index == result.physicalIndex;
+            });
+        }
+        UpdateAppliedMonitorIds();
+        PublishWriteResults(restored);
+    }
+
+    if (state.mode == BrightnessMode::Hardware) {
+        std::vector<HardwareWriteResult> written;
+        for (const auto& monitor : targets) {
+            // An unavailable display is left untouched. Other displays retain
+            // their own targets; a single failure cannot apply a group value.
+            if (!monitor.hardwareBrightness || monitor.hardwareStatus != HardwareStatus::Available) continue;
+            auto results = m_hardware.ApplyBrightness(state.enabled ? monitor.brightness : kMaxBrightness,
+                                                     {monitor.id}, &m_cancelIo);
+            written.insert(written.end(), results.begin(), results.end());
+            if (m_cancelIo.load(std::memory_order_relaxed)) return;
+        }
+        if (m_cancelIo.load(std::memory_order_relaxed)) return;
+        for (const auto& result : written) {
+            if (result.error != ERROR_SUCCESS) continue;
+            const auto matches = [&](const auto& physical) {
+                return physical.id == result.monitorId && physical.index == result.physicalIndex;
+            };
+            const auto monitor = std::ranges::find(targets, result.monitorId, &MonitorInfo::id);
+            if (!state.enabled || (monitor != targets.end() && monitor->brightness == kMaxBrightness)) {
+                std::erase_if(m_appliedPhysicalMonitors, matches);
+            } else if (!std::ranges::any_of(m_appliedPhysicalMonitors, matches)) {
+                m_appliedPhysicalMonitors.push_back({result.monitorId, result.physicalIndex});
             }
         }
-        if (!removedIds.empty()) {
-            m_hardware.ApplyBrightness(kMaxBrightness, removedIds);
+        UpdateAppliedMonitorIds();
+        PublishWriteResults(written);
+    }
+    PublishHardwareActivity();
+}
+
+void BrightnessController::UpdateAppliedMonitorIds() {
+    std::vector<std::wstring> ids;
+    for (const auto& physical : m_appliedPhysicalMonitors) {
+        if (std::ranges::find(ids, physical.id) == ids.end()) ids.push_back(physical.id);
+    }
+    m_appliedMonitorIds = std::move(ids);
+}
+
+void BrightnessController::PublishHardwareActivity() {
+    {
+        std::lock_guard lock(m_stateMutex);
+        for (auto& monitor : m_monitors) {
+            monitor.hardwareActive =
+                std::ranges::find(m_appliedMonitorIds, monitor.id) != m_appliedMonitorIds.end();
         }
     }
+    PostMessageW(m_notificationWindow, kHardwareStatusMessage, 0, 0);
+}
 
-    if (state.mode == BrightnessMode::Software) {
-        if (state.enabled) {
-            m_software.ApplyBrightness(state.brightness, targets);
-        } else {
-            m_software.Reset();
+void BrightnessController::PublishWriteResults(const std::vector<HardwareWriteResult>& results) {
+    bool changed = false;
+    {
+        std::lock_guard lock(m_stateMutex);
+        for (auto& monitor : m_monitors) {
+            bool found = false;
+            DWORD error = ERROR_SUCCESS;
+            for (const auto& result : results) {
+                if (result.monitorId != monitor.id) continue;
+                found = true;
+                if (result.error != ERROR_SUCCESS && error == ERROR_SUCCESS) error = result.error;
+            }
+            const HardwareStatus status = error == ERROR_SUCCESS ? HardwareStatus::Available
+                : (!monitor.hardwareBrightness && IsUnsupportedHardwareError(error)
+                    ? HardwareStatus::Unsupported : HardwareStatus::Failed);
+            if (found && (error != monitor.hardwareError || status != monitor.hardwareStatus)) {
+                monitor.hardwareError = error;
+                monitor.hardwareStatus = status;
+                changed = true;
+            }
+            if (found && error != ERROR_SUCCESS && !IsUnsupportedHardwareError(error)) {
+                ScheduleRetryLocked();
+            }
         }
-    } else {
-        m_software.Reset();
-        m_hardware.ApplyBrightness(state.enabled ? state.brightness : kMaxBrightness, targetIds);
     }
+    if (changed) PostMessageW(m_notificationWindow, kHardwareStatusMessage, 0, 0);
+}
 
-    m_hasApplied = true;
-    m_appliedMode = state.mode;
-    m_appliedMonitorIds = targetIds;
+void BrightnessController::PublishWorkerError(DWORD error) {
+    {
+        std::lock_guard lock(m_stateMutex);
+        m_catalogError = error;
+        ScheduleRetryLocked();
+    }
+    PostMessageW(m_notificationWindow, kMonitorsChangedMessage, 0, 0);
 }
 
 std::vector<MonitorInfo> BrightnessController::ResolveTargets(const ApplyState& state) {

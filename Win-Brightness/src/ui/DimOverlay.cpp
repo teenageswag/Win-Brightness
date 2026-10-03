@@ -63,8 +63,13 @@ BYTE DimOverlay::AlphaFromPercent(int percent) const {
 }
 
 void DimOverlay::Apply(int percent, const std::vector<MonitorInfo>& monitors) {
-    const BYTE alpha = AlphaFromPercent(percent);
-    if (alpha == 0 || monitors.empty()) {
+    auto targets = monitors;
+    for (auto& monitor : targets) monitor.brightness = ClampBrightness(percent);
+    Apply(targets);
+}
+
+void DimOverlay::Apply(const std::vector<MonitorInfo>& monitors) {
+    if (monitors.empty()) {
         Destroy();
         return;
     }
@@ -74,7 +79,7 @@ void DimOverlay::Apply(int percent, const std::vector<MonitorInfo>& monitors) {
 
     std::unordered_set<std::wstring> targetIds;
     for (const MonitorInfo& monitor : monitors) {
-        targetIds.insert(monitor.id);
+        if (AlphaFromPercent(monitor.brightness) != 0) targetIds.insert(monitor.id);
     }
 
     std::erase_if(m_windows, [&targetIds](const OverlayWindow& window) {
@@ -89,6 +94,8 @@ void DimOverlay::Apply(int percent, const std::vector<MonitorInfo>& monitors) {
 
     const HINSTANCE instance = GetModuleHandle(nullptr);
     for (const MonitorInfo& monitor : monitors) {
+        const BYTE alpha = AlphaFromPercent(monitor.brightness);
+        if (alpha == 0) continue;
         auto existing = std::ranges::find(m_windows, monitor.id, &OverlayWindow::monitorId);
         HWND window = existing != m_windows.end() ? existing->handle : nullptr;
         if (!IsWindow(window)) {
@@ -101,8 +108,11 @@ void DimOverlay::Apply(int percent, const std::vector<MonitorInfo>& monitors) {
 
             if (existing != m_windows.end()) {
                 existing->handle = window;
+                existing->bounds = {};
+                existing->alpha = 0;
             } else {
                 m_windows.push_back({monitor.id, window});
+                existing = std::prev(m_windows.end());
             }
         }
 
@@ -110,13 +120,19 @@ void DimOverlay::Apply(int percent, const std::vector<MonitorInfo>& monitors) {
             continue;
         }
 
-        SetLayeredWindowAttributes(window, 0, alpha, LWA_ALPHA);
-        SetWindowPos(
-            window, HWND_TOPMOST,
-            monitor.bounds.left, monitor.bounds.top,
-            monitor.bounds.right - monitor.bounds.left, monitor.bounds.bottom - monitor.bounds.top,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+        if (existing->alpha != alpha) {
+            if (!SetLayeredWindowAttributes(window, 0, alpha, LWA_ALPHA)) continue;
+            existing->alpha = alpha;
+        }
+        if (!EqualRect(&existing->bounds, &monitor.bounds) || !IsWindowVisible(window)) {
+            if (SetWindowPos(window, HWND_TOPMOST,
+                             monitor.bounds.left, monitor.bounds.top,
+                             monitor.bounds.right - monitor.bounds.left, monitor.bounds.bottom - monitor.bounds.top,
+                             SWP_NOACTIVATE | SWP_SHOWWINDOW)) {
+                existing->bounds = monitor.bounds;
+                RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            }
+        }
     }
 }
 

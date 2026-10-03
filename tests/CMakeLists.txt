@@ -1,0 +1,73 @@
+cmake_minimum_required(VERSION 3.25)
+project(TrenchesTests LANGUAGES CXX RC)
+if(NOT WIN32 OR NOT MSVC)
+    message(FATAL_ERROR "Tests require Windows and MSVC")
+endif()
+enable_testing()
+add_executable(IslandMathTests IslandMathTests.cpp)
+target_compile_features(IslandMathTests PRIVATE cxx_std_23)
+target_compile_options(IslandMathTests PRIVATE /W4 /WX /permissive-)
+target_include_directories(IslandMathTests PRIVATE ../Win-Brightness/src)
+add_test(NAME IslandMathTests COMMAND IslandMathTests)
+add_executable(FontTests FontTests.cpp ../Win-Brightness/src/ui/island/Fonts.cpp
+    ../Win-Brightness/src/resources/resources.rc)
+target_compile_features(FontTests PRIVATE cxx_std_23)
+target_compile_options(FontTests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4;/WX;/permissive->)
+target_compile_definitions(FontTests PRIVATE UNICODE _UNICODE)
+target_include_directories(FontTests PRIVATE ../Win-Brightness/src ../Win-Brightness/src/resources)
+target_link_libraries(FontTests PRIVATE dwrite)
+add_test(NAME FontTests COMMAND FontTests)
+add_executable(RendererTests RendererTests.cpp ../Win-Brightness/src/ui/island/Renderer.cpp
+    ../Win-Brightness/src/ui/island/Fonts.cpp ../Win-Brightness/src/resources/resources.rc)
+target_compile_features(RendererTests PRIVATE cxx_std_23)
+target_compile_options(RendererTests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4;/WX;/permissive->)
+target_compile_definitions(RendererTests PRIVATE UNICODE _UNICODE)
+target_include_directories(RendererTests PRIVATE ../Win-Brightness/src ../Win-Brightness/src/resources)
+target_link_libraries(RendererTests PRIVATE user32 gdi32)
+add_test(NAME RendererTests COMMAND RendererTests)
+add_executable(SettingsTests SettingsTests.cpp
+    ../Win-Brightness/src/app/SettingsStore.cpp
+    ../Win-Brightness/src/ui/island/Preferences.cpp
+    ../Win-Brightness/src/platform/Win32Helpers.cpp)
+target_compile_features(SettingsTests PRIVATE cxx_std_23)
+target_compile_options(SettingsTests PRIVATE /W4 /WX /permissive-)
+target_compile_definitions(SettingsTests PRIVATE UNICODE _UNICODE)
+target_include_directories(SettingsTests PRIVATE ../Win-Brightness/src)
+target_link_libraries(SettingsTests PRIVATE advapi32 gdi32 user32)
+add_test(NAME SettingsTests COMMAND SettingsTests)
+add_executable(HardwareTests HardwareTests.cpp
+    ../Win-Brightness/src/brightness/HardwareBrightness.cpp)
+target_compile_features(HardwareTests PRIVATE cxx_std_23)
+target_compile_options(HardwareTests PRIVATE /W4 /WX /permissive-)
+target_compile_definitions(HardwareTests PRIVATE UNICODE _UNICODE)
+target_include_directories(HardwareTests PRIVATE ../Win-Brightness/src)
+add_test(NAME HardwareTests COMMAND HardwareTests)
+add_executable(ControllerTests ControllerTests.cpp
+    ../Win-Brightness/src/brightness/BrightnessController.cpp
+    ../Win-Brightness/src/brightness/HardwareBrightness.cpp)
+target_compile_features(ControllerTests PRIVATE cxx_std_23)
+target_compile_options(ControllerTests PRIVATE /W4 /WX /permissive-)
+target_compile_definitions(ControllerTests PRIVATE UNICODE _UNICODE)
+target_include_directories(ControllerTests PRIVATE ../Win-Brightness/src)
+target_link_libraries(ControllerTests PRIVATE user32)
+add_test(NAME ControllerTests COMMAND ControllerTests)
+add_executable(PopupTests PopupTests.cpp
+    ../Win-Brightness/src/ui/PopupView.cpp
+    ../Win-Brightness/src/ui/island/FrameClock.cpp
+    ../Win-Brightness/src/ui/island/Renderer.cpp
+    ../Win-Brightness/src/ui/island/Fonts.cpp
+    ../Win-Brightness/src/resources/resources.rc
+    ../Win-Brightness/src/platform/Win32Helpers.cpp)
+target_compile_features(PopupTests PRIVATE cxx_std_23)
+target_compile_options(PopupTests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4;/WX;/permissive->)
+target_compile_definitions(PopupTests PRIVATE UNICODE _UNICODE)
+target_include_directories(PopupTests PRIVATE ../Win-Brightness/src ../Win-Brightness/src/resources)
+target_link_libraries(PopupTests PRIVATE gdiplus user32 gdi32 advapi32)
+add_test(NAME PopupTests COMMAND PopupTests)
+add_executable(OverlayTests OverlayTests.cpp ../Win-Brightness/src/ui/DimOverlay.cpp)
+target_compile_features(OverlayTests PRIVATE cxx_std_23)
+target_compile_options(OverlayTests PRIVATE /W4 /WX /permissive-)
+target_compile_definitions(OverlayTests PRIVATE UNICODE _UNICODE)
+target_include_directories(OverlayTests PRIVATE ../Win-Brightness/src)
+target_link_libraries(OverlayTests PRIVATE user32 gdi32)
+add_test(NAME OverlayTests COMMAND OverlayTests)

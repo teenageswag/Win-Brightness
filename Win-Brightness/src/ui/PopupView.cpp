@@ -1,1031 +1,801 @@
-#define NOMINMAX
-
 #include "PopupView.h"
+#include "island/Spring.h"
+#include "island/FrameClock.h"
+#include "island/Dismissal.h"
 #include "../platform/Win32Helpers.h"
 #include <algorithm>
+#include <cmath>
 #include <cwchar>
-#include <string>
+#include <commctrl.h>
 #include <windowsx.h>
+#include <array>
+
+#pragma comment(lib, "comctl32.lib")
 
 namespace {
-    constexpr COLORREF kBackground = RGB(0x0D, 0x0F, 0x10);
-    constexpr COLORREF kSurface = RGB(0x17, 0x1A, 0x1C);
-    constexpr COLORREF kRaised = RGB(0x20, 0x24, 0x27);
-    constexpr COLORREF kBorder = RGB(0x34, 0x3A, 0x3D);
-    constexpr COLORREF kText = RGB(0xF1, 0xF2, 0xEC);
-    constexpr COLORREF kMuted = RGB(0x92, 0x9A, 0x96);
-    constexpr COLORREF kDisabled = RGB(0x59, 0x60, 0x5D);
-    constexpr COLORREF kAccent = RGB(0xC6, 0xF3, 0x6B);
-    constexpr COLORREF kAccentText = RGB(0x10, 0x15, 0x0A);
-    constexpr COLORREF kAccentDim = RGB(0x35, 0x45, 0x1F);
-
-    struct Palette {
-        COLORREF background;
-        COLORREF surface;
-        COLORREF raised;
-        COLORREF border;
-        COLORREF text;
-        COLORREF muted;
-        COLORREF disabled;
-        COLORREF accent;
-        COLORREF accentText;
-        COLORREF accentDim;
-    };
-
-    Palette GetPalette() {
-        HIGHCONTRAST contrast{sizeof(contrast)};
-        if (SystemParametersInfo(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
-            (contrast.dwFlags & HCF_HIGHCONTRASTON) != 0) {
-            return {
-                GetSysColor(COLOR_WINDOW),
-                GetSysColor(COLOR_BTNFACE),
-                GetSysColor(COLOR_BTNFACE),
-                GetSysColor(COLOR_WINDOWTEXT),
-                GetSysColor(COLOR_WINDOWTEXT),
-                GetSysColor(COLOR_GRAYTEXT),
-                GetSysColor(COLOR_GRAYTEXT),
-                GetSysColor(COLOR_HIGHLIGHT),
-                GetSysColor(COLOR_HIGHLIGHTTEXT),
-                GetSysColor(COLOR_HIGHLIGHT)
-            };
-        }
-
-        return {kBackground, kSurface, kRaised, kBorder, kText, kMuted, kDisabled, kAccent, kAccentText, kAccentDim};
-    }
-
-    Gdiplus::Color ToGdiColor(COLORREF value) {
-        return Gdiplus::Color(255, GetRValue(value), GetGValue(value), GetBValue(value));
-    }
-
-    Gdiplus::RectF TextRect(const RECT& rect) {
-        return {
-            static_cast<Gdiplus::REAL>(rect.left),
-            static_cast<Gdiplus::REAL>(rect.top),
-            static_cast<Gdiplus::REAL>(rect.right - rect.left),
-            static_cast<Gdiplus::REAL>(rect.bottom - rect.top)
-        };
-    }
-
-    Gdiplus::Rect PixelRect(const RECT& rect) {
-        return {rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top};
-    }
-
-    RECT Inset(RECT rect, int amount) {
-        InflateRect(&rect, -amount, -amount);
-        return rect;
-    }
-
-    bool Intersects(const RECT& left, const RECT& right) {
-        RECT intersection{};
-        return IntersectRect(&intersection, &left, &right) != FALSE;
-    }
-
-    void FillAndBorder(Gdiplus::Graphics& graphics, const RECT& rect, COLORREF fill, COLORREF border, float width = 1.0f) {
-        Gdiplus::SolidBrush brush(ToGdiColor(fill));
-        graphics.FillRectangle(&brush, PixelRect(rect));
-        Gdiplus::Pen pen(ToGdiColor(border), width);
-        graphics.DrawRectangle(
-            &pen,
-            static_cast<INT>(rect.left),
-            static_cast<INT>(rect.top),
-            static_cast<INT>(rect.right - rect.left - 1),
-            static_cast<INT>(rect.bottom - rect.top - 1));
-    }
-
-    void DrawText(
-        Gdiplus::Graphics& graphics,
-        const std::wstring& text,
-        const Gdiplus::Font& font,
-        const RECT& rect,
-        COLORREF color,
-        Gdiplus::StringAlignment horizontal = Gdiplus::StringAlignmentNear,
-        Gdiplus::StringAlignment vertical = Gdiplus::StringAlignmentCenter) {
-        Gdiplus::StringFormat format;
-        format.SetAlignment(horizontal);
-        format.SetLineAlignment(vertical);
-        format.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
-        format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
-        Gdiplus::SolidBrush brush(ToGdiColor(color));
-        graphics.DrawString(text.c_str(), -1, &font, TextRect(rect), &format, &brush);
-    }
-
-    void DrawCheck(Gdiplus::Graphics& graphics, const RECT& rect, COLORREF color, int dpi) {
-        Gdiplus::Pen pen(ToGdiColor(color), static_cast<Gdiplus::REAL>((std::max)(2, ScaleByDpi(2, dpi))));
-        pen.SetStartCap(Gdiplus::LineCapSquare);
-        pen.SetEndCap(Gdiplus::LineCapSquare);
-        graphics.DrawLine(
-            &pen,
-            static_cast<Gdiplus::REAL>(rect.left + (rect.right - rect.left) * 0.20),
-            static_cast<Gdiplus::REAL>(rect.top + (rect.bottom - rect.top) * 0.52),
-            static_cast<Gdiplus::REAL>(rect.left + (rect.right - rect.left) * 0.43),
-            static_cast<Gdiplus::REAL>(rect.top + (rect.bottom - rect.top) * 0.74));
-        graphics.DrawLine(
-            &pen,
-            static_cast<Gdiplus::REAL>(rect.left + (rect.right - rect.left) * 0.43),
-            static_cast<Gdiplus::REAL>(rect.top + (rect.bottom - rect.top) * 0.74),
-            static_cast<Gdiplus::REAL>(rect.left + (rect.right - rect.left) * 0.82),
-            static_cast<Gdiplus::REAL>(rect.top + (rect.bottom - rect.top) * 0.27));
-    }
-
-    void DrawMonitorIcon(Gdiplus::Graphics& graphics, const RECT& rect, COLORREF color, int dpi) {
-        const float stroke = static_cast<Gdiplus::REAL>((std::max)(1, ScaleByDpi(1, dpi)));
-        Gdiplus::Pen pen(ToGdiColor(color), stroke);
-        const int standY = rect.bottom - ScaleByDpi(3, dpi);
-        graphics.DrawRectangle(
-            &pen,
-            static_cast<INT>(rect.left),
-            static_cast<INT>(rect.top),
-            static_cast<INT>(rect.right - rect.left - 1),
-            static_cast<INT>(rect.bottom - rect.top - ScaleByDpi(6, dpi)));
-        const int centerX = (rect.left + rect.right) / 2;
-        graphics.DrawLine(&pen, centerX, rect.bottom - ScaleByDpi(6, dpi), centerX, standY);
-        graphics.DrawLine(&pen, rect.left + ScaleByDpi(5, dpi), standY, rect.right - ScaleByDpi(5, dpi), standY);
-    }
-
-    LRESULT CALLBACK PopupWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
-        PopupView* view = nullptr;
-        if (message == WM_NCCREATE) {
-            auto* create = reinterpret_cast<LPCREATESTRUCT>(lParam);
-            view = static_cast<PopupView*>(create->lpCreateParams);
-            SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(view));
-        } else {
-            view = reinterpret_cast<PopupView*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
-        }
-
-        return view ? view->HandleMessage(hWnd, message, wParam, lParam)
-                    : DefWindowProc(hWnd, message, wParam, lParam);
-    }
-} // namespace
-
-void PopupView::Layout::Compute(const RECT& client, int dpi, size_t monitorCount, int scrollOffset) {
-    const int width = client.right - client.left;
-    const int height = client.bottom - client.top;
-    const int padding = ScaleByDpi(24, dpi);
-    const int gap = ScaleByDpi(10, dpi);
-
-    const int powerSize = ScaleByDpi(44, dpi);
-    power = {width - padding - powerSize, padding, width - padding, padding + powerSize};
-
-    brightnessCard = {
-        padding,
-        ScaleByDpi(84, dpi),
-        width - padding,
-        ScaleByDpi(196, dpi)
-    };
-    sliderLeft = brightnessCard.left + ScaleByDpi(18, dpi);
-    sliderRight = brightnessCard.right - ScaleByDpi(18, dpi);
-    sliderY = brightnessCard.bottom - ScaleByDpi(24, dpi);
-    sliderHit = {sliderLeft, sliderY - ScaleByDpi(16, dpi), sliderRight, sliderY + ScaleByDpi(16, dpi)};
-
-    const int modeTop = ScaleByDpi(236, dpi);
-    const int modeBottom = modeTop + ScaleByDpi(46, dpi);
-    const int contentWidth = width - padding * 2;
-    const int halfWidth = (contentWidth - gap) / 2;
-    softwareMode = {padding, modeTop, padding + halfWidth, modeBottom};
-    hardwareMode = {softwareMode.right + gap, modeTop, width - padding, modeBottom};
-
-    const int scopeTop = ScaleByDpi(326, dpi);
-    const int scopeBottom = scopeTop + ScaleByDpi(44, dpi);
-    allDisplays = {padding, scopeTop, padding + halfWidth, scopeBottom};
-    selectedDisplays = {allDisplays.right + gap, scopeTop, width - padding, scopeBottom};
-
-    autostart = {
-        padding,
-        height - padding - ScaleByDpi(48, dpi),
-        width - padding,
-        height - padding
-    };
-    monitorViewport = {
-        padding,
-        scopeBottom + ScaleByDpi(10, dpi),
-        width - padding,
-        autostart.top - ScaleByDpi(18, dpi)
-    };
-
-    monitorItemHeight = ScaleByDpi(44, dpi);
-    monitorItemGap = ScaleByDpi(6, dpi);
-    monitorItems.clear();
-    monitorItems.reserve(monitorCount);
-    int itemTop = monitorViewport.top - scrollOffset;
-    for (size_t i = 0; i < monitorCount; ++i) {
-        monitorItems.push_back({
-            monitorViewport.left,
-            itemTop,
-            monitorViewport.right,
-            itemTop + monitorItemHeight
-        });
-        itemTop += monitorItemHeight + monitorItemGap;
-    }
+constexpr UINT_PTR kBrightnessTimer = 1;
+constexpr UINT_PTR kGraphicsTimer = 2;
+constexpr UINT_PTR kDismissTimer = 3;
+constexpr UINT kBrightnessInterval = 70;
+constexpr wchar_t kWindowClass[] = L"TrenchesDynamicIsland";
+struct KeyboardShortcut { int id; UINT key; UINT command; UINT modifiers; };
+constexpr UINT kControlModifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
+constexpr std::array<KeyboardShortcut, 12> kShortcuts{{
+    {21, VK_LEFT, VK_LEFT, kControlModifiers}, {22, VK_RIGHT, VK_RIGHT, kControlModifiers},
+    {23, VK_UP, VK_UP, kControlModifiers}, {24, VK_DOWN, VK_DOWN, kControlModifiers},
+    {25, VK_HOME, VK_HOME, kControlModifiers}, {26, VK_END, VK_END, kControlModifiers},
+    {27, VK_PRIOR, VK_PRIOR, kControlModifiers}, {28, VK_NEXT, VK_NEXT, kControlModifiers},
+    {29, 'N', VK_TAB, kControlModifiers}, {30, VK_RETURN, VK_RETURN, kControlModifiers},
+    {32, VK_ESCAPE, VK_ESCAPE, kControlModifiers},
+    {33, 'N', VK_TAB, kControlModifiers | MOD_SHIFT}
+}};
 }
 
-PopupView::PopupView(HINSTANCE hInstance, PopupActions actions)
-    : m_hInstance(hInstance), m_actions(std::move(actions)) {}
+struct PopupView::Impl {
+    HINSTANCE instance;
+    HWND window = nullptr, tooltip = nullptr;
+    PopupActions actions;
+    PopupState state;
+    island::Preferences preferences;
+    std::unique_ptr<island::Renderer> renderer;
+    island::FrameClock clock;
+    island::Spring width{island::kWidth}, height{island::kMinimumHeight};
+    island::Spring visibility{1, island::kFeedbackSpring};
+    struct RowMotion {
+        island::Spring slider{kDefaultBrightness, island::kSliderSpring};
+        island::Spring number{0, island::kFeedbackSpring};
+    };
+    std::map<std::wstring, RowMotion> rows;
+    MonitorBrightnessValues pending;
+    island::Spring mode{0, island::kFeedbackSpring}, feedback{1, island::kFeedbackSpring};
+    island::Target focus{island::Control::Slider, 0}, hover{}, pressed{};
+    bool dirty = true, dragging = false, tracking = false;
+    bool brightnessTimer = false, hiding = false, keyboardMode = false;
+    bool reducedMotion = false, repositioning = false, finishingDrag = false;
+    bool dismissTimer = false, mouseRegistered = false, contextMenu = false;
+    island::IdleDismissal dismissal;
+    std::optional<POINT> lastPointer;
+    std::wstring dragId, tooltipText, wheelId;
+    int wheelRemainder = 0;
+    float scroll = 0, maximumHeight = 449, maximumWidth = island::kWidth;
+    UINT dpi = 96, graphicsRetries = 0;
+    HRESULT renderError = S_OK;
+    std::array<bool, kShortcuts.size()> shortcuts{};
+    DWORD shortcutError = ERROR_SUCCESS;
+    LARGE_INTEGER frequency{}, lastFrame{};
 
-PopupView::~PopupView() {
-    if (m_hWnd) {
-        DestroyWindow(m_hWnd);
-        m_hWnd = nullptr;
+    Impl(HINSTANCE module, PopupActions callbacks) : instance(module), actions(std::move(callbacks)) {
+        QueryPerformanceFrequency(&frequency);
+        RefreshMotionPreference();
+    }
+    ~Impl() {
+        if (window) {
+            StopDismissal();
+            StopMouseInput();
+            KillTimer(window, kBrightnessTimer); KillTimer(window, kGraphicsTimer);
+            UnregisterShortcuts();
+            if (GetCapture() == window) ReleaseCapture();
+            clock.Stop(); renderer.reset(); DestroyWindow(window);
+        }
+    }
+    bool Animate() const { return preferences.animations && !reducedMotion; }
+    void StopDismissal() {
+        dismissal.Cancel(); dismissTimer = false;
+        if (window) KillTimer(window, kDismissTimer);
+    }
+    void ResetDismissal() {
+        if (!window || !IsWindowVisible(window) || hiding || contextMenu || GetCapture() == window) return;
+        dismissal.Reset(GetTickCount64());
+        if (!dismissTimer) dismissTimer = SetTimer(window, kDismissTimer, island::IdleDismissal::kInterval, nullptr) != 0;
+    }
+    void StopMouseInput() {
+        if (!mouseRegistered) return;
+        const RAWINPUTDEVICE device{1, 2, RIDEV_REMOVE, nullptr};
+        if (!RegisterRawInputDevices(&device, 1, sizeof(device)) && actions.reportUiError) {
+            const DWORD error = GetLastError(); actions.reportUiError(error ? HRESULT_FROM_WIN32(error) : E_FAIL);
+        }
+        mouseRegistered = false;
+    }
+    void StartMouseInput() {
+        if (mouseRegistered) return;
+        // Observe clicks without suppressing legacy input or activating the
+        // overlay. This application is the sole owner of raw mouse registration.
+        const RAWINPUTDEVICE device{1, 2, RIDEV_INPUTSINK, window};
+        mouseRegistered = RegisterRawInputDevices(&device, 1, sizeof(device)) != FALSE;
+        if (!mouseRegistered && actions.reportUiError) {
+            const DWORD error = GetLastError();
+            actions.reportUiError(error ? HRESULT_FROM_WIN32(error) : E_FAIL);
+        }
+    }
+    void UnregisterShortcuts() {
+        for (size_t i = 0; i < kShortcuts.size(); ++i) {
+            if (shortcuts[i]) UnregisterHotKey(window, kShortcuts[i].id);
+            shortcuts[i] = false;
+        }
+    }
+    void RegisterShortcuts() {
+        UnregisterShortcuts(); shortcutError = ERROR_SUCCESS;
+        for (size_t i = 0; i < kShortcuts.size(); ++i) {
+            shortcuts[i] = RegisterHotKey(window, kShortcuts[i].id, kShortcuts[i].modifiers, kShortcuts[i].key) != FALSE;
+            if (!shortcuts[i] && shortcutError == ERROR_SUCCESS) {
+                shortcutError = GetLastError();
+                if (!shortcutError) shortcutError = ERROR_GEN_FAILURE;
+            }
+        }
+    }
+    size_t Primary() const {
+        const auto primary = std::ranges::find_if(state.monitors, [](const auto& monitor) { return monitor.primary; });
+        return primary == state.monitors.end() ? 0 : static_cast<size_t>(primary - state.monitors.begin());
+    }
+    MONITORINFO Monitor() const {
+        MONITORINFO info{sizeof(info)};
+        const size_t primary = Primary();
+        if (primary < state.monitors.size() && GetMonitorInfoW(state.monitors[primary].handle, &info)) return info;
+        GetMonitorInfoW(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY), &info);
+        return info;
+    }
+    float Scale() const { return static_cast<float>(dpi) / 96.0f; }
+    void RequestFrame() {
+        dirty = true;
+        if (window && renderer && IsWindowVisible(window)) clock.Request();
+        if (window) PostMessageW(window, WM_NULL, 0, 0);
+    }
+    bool Moving() const {
+        return width.Active(0.05) || height.Active(0.05) || visibility.Active() ||
+            mode.Active() || feedback.Active() || std::ranges::any_of(rows, [](const auto& entry) {
+                return entry.second.slider.Active(0.05) || entry.second.number.Active();
+            });
+    }
+    island::Layout Layout() const {
+        return island::Layout::Build(static_cast<float>(width.Value()), static_cast<float>(height.Value()),
+            state.monitors.size(), scroll, maximumWidth);
+    }
+    void Targets() {
+        width.Target(maximumWidth);
+        height.Target(island::PanelHeight(state.monitors.size(), maximumHeight, maximumWidth));
+        if (!Animate()) {
+            width.Snap(width.Target()); height.Snap(height.Target());
+        }
+        RequestFrame();
+    }
+    void RefreshMotionPreference() {
+        BOOL enabled = TRUE;
+        SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0);
+        reducedMotion = !enabled;
+    }
+    void MeasureMonitor(bool updateDpi) {
+        const auto info = Monitor();
+        if (updateDpi) dpi = static_cast<UINT>(GetDpiForPoint({info.rcMonitor.left + 1, info.rcMonitor.top + 1}));
+        maximumWidth = std::max(200.0f, std::min(island::kWidth,
+            static_cast<float>(info.rcMonitor.right - info.rcMonitor.left) / Scale() - island::kShadowMargin * 2));
+        maximumHeight = std::max(island::kMinimumHeight, std::min(island::PanelHeight(5, 10000, maximumWidth),
+            static_cast<float>(info.rcWork.bottom - info.rcMonitor.top) / Scale() - island::kShadowMargin));
+    }
+    void Position() {
+        if (!window || repositioning) return;
+        const auto info = Monitor();
+        const int w = static_cast<int>(std::ceil((width.Value() + island::kShadowMargin * 2) * Scale()));
+        const int h = static_cast<int>(std::ceil((height.Value() + island::kShadowMargin) * Scale()));
+        // No top shadow inset: both states stay on the screen's top edge.
+        const int x = info.rcMonitor.left + (info.rcMonitor.right - info.rcMonitor.left - w) / 2;
+        const int y = info.rcMonitor.top;
+        RECT current{};
+        if (GetWindowRect(window, &current) && current.left == x && current.top == y &&
+            current.right - current.left == w && current.bottom - current.top == h) return;
+        repositioning = true;
+        SetWindowPos(window, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
+        repositioning = false;
+    }
+    HRESULT InitializeRenderer() {
+        clock.Stop();
+        renderer.reset();
+        renderer = std::make_unique<island::Renderer>();
+        const HRESULT result = renderer->Initialize(window, instance, dpi, maximumHeight);
+        if (FAILED(result)) renderer.reset();
+        else if (!clock.Start(renderer->FrameHandle())) {
+            renderer.reset(); return E_OUTOFMEMORY;
+        }
+        else { renderError = S_OK; graphicsRetries = 0; }
+        return result;
+    }
+    void GraphicsFailure(HRESULT error) {
+        const bool changed = renderError != error;
+        renderError = error; clock.Stop(); renderer.reset(); dirty = false;
+        if (changed && actions.reportUiError) actions.reportUiError(error);
+        if (graphicsRetries < 3 && window && IsWindowVisible(window)) {
+            ++graphicsRetries; SetTimer(window, kGraphicsTimer, 1000, nullptr);
+        }
+    }
+    island::Presentation Presentation() const {
+        return island::PresentPanel(static_cast<float>(height.Value()), visibility.Value());
+    }
+    island::Point ClientPoint(float pixelX, float pixelY) const {
+        RECT client{}; GetClientRect(window, &client);
+        const auto presentation = Presentation();
+        const float center = static_cast<float>(client.right) / Scale() * 0.5f;
+        return {(pixelX / Scale() - center) / presentation.scale + static_cast<float>(width.Value()) * 0.5f,
+                (pixelY / Scale() - presentation.offsetY) / presentation.scale};
+    }
+    island::Point Mouse(LPARAM param) const {
+        return ClientPoint(static_cast<float>(GET_X_LPARAM(param)), static_cast<float>(GET_Y_LPARAM(param)));
+    }
+    double BrightnessAt(float x, size_t index) const {
+        const auto layout = Layout();
+        const auto row = std::ranges::find_if(layout.rows, [index](const auto& item) { return item.index == index; });
+        auto rect = row == layout.rows.end() ? island::Rect{} : row->slider;
+        rect.left += 10; rect.right -= 10;
+        if (rect.Width() <= 0) return index < state.monitors.size() ? state.monitors[index].brightness : kDefaultBrightness;
+        const float ratio = std::clamp((x - rect.left) / rect.Width(), 0.0f, 1.0f);
+        return static_cast<double>(ratio) * 99.0 + 1.0;
+    }
+    bool Adjustable(size_t index) const {
+        return index < state.monitors.size() && (state.mode == BrightnessMode::Software ||
+            (state.monitors[index].hardwareBrightness && state.monitors[index].hardwareStatus == HardwareStatus::Available));
+    }
+    void AccessibleName() {
+        std::wstring name = L"trenches. ";
+        switch (focus.control) {
+        case island::Control::Slider:
+            if (focus.monitor < state.monitors.size()) name += state.monitors[focus.monitor].name + L". ";
+            if (focus.monitor < state.monitors.size()) name += L"Brightness " +
+                std::to_wstring(state.monitors[focus.monitor].brightness) + L" percent.";
+            if (!Adjustable(focus.monitor)) name += L" Hardware brightness unavailable.";
+            break;
+        case island::Control::Monitor:
+            if (focus.monitor < state.monitors.size()) name += state.monitors[focus.monitor].name;
+            break;
+        case island::Control::Software: name += L"Software dimming."; break;
+        case island::Control::Hardware: name += L"Hardware DDC CI."; break;
+        case island::Control::Power: name += state.enabled ? L"Disable dimming." : L"Enable dimming."; break;
+        case island::Control::None: break;
+        }
+        if (FAILED(renderError)) name += L" Graphics unavailable.";
+        if (keyboardMode && shortcutError) name += L" Some keyboard shortcuts are unavailable. Windows error " +
+            std::to_wstring(shortcutError) + L".";
+        SetWindowTextW(window, name.c_str());
+        if (IsWindowVisible(window)) NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, window, OBJID_WINDOW, CHILDID_SELF);
+    }
+    void Tooltip(bool show) {
+        if (!tooltip) return;
+        TOOLINFOW tool{sizeof(tool)}; tool.hwnd = window; tool.uId = 1;
+        if (show) {
+            tool.lpszText = tooltipText.data();
+            SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
+            POINT position{}; GetCursorPos(&position);
+            SendMessageW(tooltip, TTM_TRACKPOSITION, 0, MAKELPARAM(position.x + 10, position.y + 24));
+        }
+        SendMessageW(tooltip, TTM_TRACKACTIVATE, show, reinterpret_cast<LPARAM>(&tool));
+    }
+    void CreateTooltip() {
+        INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_WIN95_CLASSES}; InitCommonControlsEx(&controls);
+        tooltip = CreateWindowExW(WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr,
+            WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0, 0, 0, 0, window, nullptr, instance, nullptr);
+        if (!tooltip) return;
+        TOOLINFOW tool{sizeof(tool)}; tool.hwnd = window; tool.uId = 1; tool.uFlags = TTF_TRACK | TTF_ABSOLUTE;
+        tool.lpszText = const_cast<wchar_t*>(L"");
+        SendMessageW(tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+        SendMessageW(tooltip, TTM_SETMAXTIPWIDTH, 0, 420);
+    }
+    void Hover(island::Target control) {
+        if (hover == control) return;
+        hover = control; feedback.Target(control.control == island::Control::None ? 1.0 : 1.015);
+        Tooltip(false);
+        if (control.control == island::Control::Monitor && control.monitor < state.monitors.size()) {
+            tooltipText = state.monitors[control.monitor].name;
+            const DWORD error = state.monitors[control.monitor].hardwareError;
+            if (error) tooltipText += L"\nDDC/CI error " + std::to_wstring(error) + L".";
+            Tooltip(true);
+        }
+        RequestFrame();
+    }
+    void QueueBrightness() {
+        // Throttle without restarting a debounce on each pointer message.
+        // Optimistic UI is immediate; the backend receives at most ~14 targets/s.
+        if (!brightnessTimer) {
+            brightnessTimer = SetTimer(window, kBrightnessTimer, kBrightnessInterval, nullptr) != 0;
+            if (!brightnessTimer) CommitBrightness();
+        }
+    }
+    void CommitBrightness() {
+        if (brightnessTimer) KillTimer(window, kBrightnessTimer);
+        brightnessTimer = false;
+        const auto targets = pending;
+        for (const auto& [id, value] : targets) {
+            pending.erase(id);
+            const auto found = std::ranges::find(state.monitors, id, &MonitorInfo::id);
+            if (found != state.monitors.end() && Adjustable(static_cast<size_t>(found - state.monitors.begin())) && actions.setMonitorBrightness)
+                actions.setMonitorBrightness(id, value);
+        }
+    }
+    void DisplayBrightness(size_t index, int value, bool direct) {
+        if (!Adjustable(index)) return;
+        value = ClampBrightness(value);
+        auto& monitor = state.monitors[index];
+        if (monitor.brightness == value) return;
+        monitor.brightness = value; pending[monitor.id] = value;
+        auto& motion = rows[monitor.id];
+        if (direct || !Animate()) motion.slider.Snap(value); else motion.slider.Target(value);
+        motion.number.Target(1.0); QueueBrightness(); AccessibleName(); RequestFrame();
+    }
+    void DragTo(float x, size_t index) {
+        if (!Adjustable(index)) return;
+        const std::wstring id = state.monitors[index].id;
+        const double value = BrightnessAt(x, index);
+        DisplayBrightness(index, static_cast<int>(std::lround(value)), true);
+        // Keep the painted fill continuous between integer hardware targets.
+        // A failed throttle timer dispatches synchronously; its callback can
+        // refresh the catalog and cancel capture before this function returns.
+        const auto motion = rows.find(id);
+        if (dragging && dragId == id && motion != rows.end()) motion->second.slider.Snap(value);
+        RequestFrame();
+    }
+    void SelectSliderTarget(size_t index) {
+        if (index < state.monitors.size()) focus = {island::Control::Slider, index};
+    }
+    void FinishDrag(bool commit = true) {
+        if (finishingDrag) return;
+        const auto id = dragId;
+        finishingDrag = true; dragging = false; pressed = {}; dragId.clear();
+        feedback.Target(hover.control == island::Control::None ? 1.0 : 1.015);
+        if (GetCapture() == window) ReleaseCapture();
+        if (commit) CommitBrightness();
+        else pending.erase(id);
+        const auto monitor = std::ranges::find(state.monitors, id, &MonitorInfo::id);
+        if (monitor != state.monitors.end()) rows[id].slider.Target(monitor->brightness);
+        if (pending.empty()) { brightnessTimer = false; KillTimer(window, kBrightnessTimer); }
+        finishingDrag = false; RequestFrame();
+        ResetDismissal();
+    }
+    void EnsureFocusVisible() {
+        if (focus.control != island::Control::Slider && focus.control != island::Control::Monitor) return;
+        auto layout = Layout();
+        if (focus.monitor >= layout.rows.size()) return;
+        const auto& row = layout.rows[focus.monitor];
+        if (row.label.top < layout.viewport.top) scroll -= layout.viewport.top - row.label.top;
+        if (row.slider.bottom > layout.viewport.bottom) scroll += row.slider.bottom - layout.viewport.bottom;
+        scroll = std::clamp(scroll, 0.0f, layout.MaximumScroll());
+    }
+    std::vector<island::Target> FocusOrder() const {
+        std::vector<island::Target> order;
+        const auto layout = Layout();
+        for (const auto& row : layout.rows) {
+            if (Adjustable(row.index)) order.push_back({island::Control::Slider, row.index});
+        }
+        {
+            order.push_back({island::Control::Software}); order.push_back({island::Control::Hardware});
+        }
+        order.push_back({island::Control::Power});
+        return order;
+    }
+    void MoveFocus(bool backwards) {
+        const auto order = FocusOrder();
+        auto current = std::ranges::find(order, focus);
+        size_t index = current == order.end() ? 0 : static_cast<size_t>(current - order.begin());
+        index = backwards ? (index + order.size() - 1) % order.size() : (index + 1) % order.size();
+        focus = order[index]; EnsureFocusVisible(); AccessibleName(); RequestFrame();
+        NotifyWinEvent(EVENT_OBJECT_FOCUS, window, OBJID_WINDOW, CHILDID_SELF);
+    }
+    void Activate(island::Target control) {
+        CommitBrightness();
+        switch (control.control) {
+        case island::Control::Power:
+            state.enabled = !state.enabled;
+            if (actions.setEnabled) actions.setEnabled(state.enabled);
+            break;
+        case island::Control::Software:
+        case island::Control::Hardware:
+            state.mode = control.control == island::Control::Software ? BrightnessMode::Software : BrightnessMode::Hardware;
+            mode.Target(state.mode == BrightnessMode::Hardware ? 1.0 : 0.0);
+            if (actions.setMode) actions.setMode(state.mode);
+            break;
+        case island::Control::Monitor: SelectSliderTarget(control.monitor); break;
+        case island::Control::Slider:
+        case island::Control::None: break;
+        }
+        AccessibleName(); RequestFrame();
+    }
+};
+
+PopupView::PopupView(HINSTANCE instance, PopupActions actions) : m_impl(std::make_unique<Impl>(instance, std::move(actions))) {}
+PopupView::~PopupView() = default;
+HWND PopupView::GetHWnd() const { return m_impl->window; }
+bool PopupView::IsVisible() const { return m_impl->window && IsWindowVisible(m_impl->window); }
+island::Layout PopupView::GetLayout() const { return m_impl->Layout(); }
+island::Presentation PopupView::GetPresentation() const { return m_impl->Presentation(); }
+HRESULT PopupView::LastRenderError() const { return m_impl->renderError; }
+island::Preferences PopupView::GetPreferences() const { return m_impl->preferences; }
+
+LRESULT CALLBACK PopupView::WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    PopupView* popup = reinterpret_cast<PopupView*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (message == WM_NCCREATE) {
+        popup = static_cast<PopupView*>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
+        popup->m_impl->window = window;
+        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(popup));
+    }
+    try {
+        return popup ? popup->HandleMessage(window, message, wParam, lParam) : DefWindowProcW(window, message, wParam, lParam);
+    } catch (...) {
+        // Never unwind a C++ exception through the User32 callback boundary.
+        if (popup) { popup->m_impl->renderError = E_OUTOFMEMORY; popup->m_impl->dirty = false; }
+        if (GetCapture() == window) ReleaseCapture();
+        ShowWindow(window, SW_HIDE);
+        return message == WM_NCCREATE ? FALSE : 0;
     }
 }
-
 bool PopupView::Register() {
-    WNDCLASSEX windowClass{sizeof(windowClass)};
-    windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW;
-    windowClass.lpfnWndProc = PopupWndProc;
-    windowClass.hInstance = m_hInstance;
-    windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    windowClass.lpszClassName = L"TrenchesControlCenter";
-    return RegisterClassEx(&windowClass) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+    WNDCLASSEXW windowClass{sizeof(windowClass)};
+    windowClass.lpfnWndProc = WindowProc; windowClass.hInstance = m_impl->instance;
+    windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW); windowClass.lpszClassName = kWindowClass;
+    if (RegisterClassExW(&windowClass)) return true;
+    const DWORD error = GetLastError();
+    if (error == ERROR_CLASS_ALREADY_EXISTS) return true;
+    m_impl->renderError = error ? HRESULT_FROM_WIN32(error) : E_FAIL;
+    return false;
 }
-
 bool PopupView::Create() {
-    m_hWnd = CreateWindowEx(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-        L"TrenchesControlCenter", L"trenches",
-        WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT, kBaseWidth, kBaseHeight,
-        nullptr, nullptr, m_hInstance, this);
-    return m_hWnd != nullptr;
-}
-
-void PopupView::Toggle(POINT monitorPoint, bool keyboardInvoked) {
-    if (!m_hWnd) {
-        return;
-    }
-    if (IsVisible()) {
-        Hide();
-        return;
-    }
-
-    const HMONITOR monitor = MonitorFromPoint(monitorPoint, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO info{sizeof(info)};
-    if (!GetMonitorInfo(monitor, &info)) {
-        return;
-    }
-
-    const int dpi = GetDpiForPoint(monitorPoint);
-    const int margin = ScaleByDpi(16, dpi);
-    const int workWidth = info.rcWork.right - info.rcWork.left;
-    const int workHeight = info.rcWork.bottom - info.rcWork.top;
-    const int width = (std::min)(ScaleByDpi(kBaseWidth, dpi), workWidth - margin * 2);
-    const int preferredHeight = ScaleByDpi(kBaseHeight, dpi);
-    const int minimumHeight = (std::min)(ScaleByDpi(kBaseMinimumHeight, dpi), workHeight - margin * 2);
-    const int height = (std::max)(minimumHeight, (std::min)(preferredHeight, workHeight - margin * 2));
-    const int x = info.rcWork.left + (workWidth - width) / 2;
-    const int y = info.rcWork.top + (workHeight - height) / 2;
-
-    (void)keyboardInvoked;
-    m_showKeyboardFocus = false;
-    m_focus = {FocusKind::Slider, 0};
-    m_hover = {};
-    m_pressed = {};
-    m_showTime = GetTickCount64();
-    EnsureFocusedMonitorVisible();
-    SetWindowPos(m_hWnd, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW);
-    SetForegroundWindow(m_hWnd);
-    SetFocus(m_hWnd);
-    UpdateAccessibleName();
-    ResetAutoHideTimer();
-    InvalidateRect(m_hWnd, nullptr, FALSE);
-}
-
-void PopupView::Hide(bool animated) {
-    if (!m_hWnd) {
-        return;
-    }
-    CommitBrightness();
-    KillTimer(m_hWnd, kBrightnessTimerId);
-    KillTimer(m_hWnd, kAutoHideTimerId);
-    if (GetCapture() == m_hWnd) {
-        ReleaseCapture();
-    }
-    m_isDragging = false;
-    m_pressed = {};
-
-    BOOL animationsEnabled = TRUE;
-    SystemParametersInfo(SPI_GETCLIENTAREAANIMATION, 0, &animationsEnabled, 0);
-    if (animated && animationsEnabled) {
-        if (!AnimateWindow(m_hWnd, kFadeDurationMs, AW_BLEND | AW_HIDE)) {
-            ShowWindow(m_hWnd, SW_HIDE);
-        }
-    } else {
-        ShowWindow(m_hWnd, SW_HIDE);
-    }
-}
-
-bool PopupView::IsVisible() const {
-    return m_hWnd && IsWindowVisible(m_hWnd);
-}
-
-void PopupView::SetState(PopupState state) {
-    state.brightness = ClampBrightness(state.brightness);
-    m_state = std::move(state);
-    if (m_focus.kind == FocusKind::Monitor && m_focus.monitorIndex >= m_state.monitors.size()) {
-        m_focus = {FocusKind::SelectedDisplays, 0};
-    }
-    if (m_hWnd) {
-        const Layout layout = BuildLayout();
-        m_scrollOffset = std::clamp(m_scrollOffset, 0, MaximumScroll(layout));
-        UpdateAccessibleName();
-        InvalidateRect(m_hWnd, nullptr, FALSE);
-    }
-}
-
-PopupView::Layout PopupView::BuildLayout() const {
-    RECT client{};
-    GetClientRect(m_hWnd, &client);
-    Layout layout;
-    layout.Compute(client, GetDpiForHwnd(m_hWnd), m_state.monitors.size(), m_scrollOffset);
-    return layout;
-}
-
-std::vector<PopupView::FocusTarget> PopupView::FocusOrder() const {
-    std::vector<FocusTarget> order = {
-        {FocusKind::Power, 0},
-        {FocusKind::Slider, 0},
-        {FocusKind::SoftwareMode, 0},
-        {FocusKind::HardwareMode, 0},
-        {FocusKind::AllDisplays, 0},
-        {FocusKind::SelectedDisplays, 0}
-    };
-    for (size_t i = 0; i < m_state.monitors.size(); ++i) {
-        order.push_back({FocusKind::Monitor, i});
-    }
-    order.push_back({FocusKind::Autostart, 0});
-    return order;
-}
-
-PopupView::FocusTarget PopupView::HitTest(POINT point, const Layout& layout) const {
-    if (PtInRect(&layout.power, point)) return {FocusKind::Power, 0};
-    if (PtInRect(&layout.sliderHit, point)) return {FocusKind::Slider, 0};
-    if (PtInRect(&layout.softwareMode, point)) return {FocusKind::SoftwareMode, 0};
-    if (PtInRect(&layout.hardwareMode, point)) return {FocusKind::HardwareMode, 0};
-    if (PtInRect(&layout.allDisplays, point)) return {FocusKind::AllDisplays, 0};
-    if (PtInRect(&layout.selectedDisplays, point)) return {FocusKind::SelectedDisplays, 0};
-    if (PtInRect(&layout.monitorViewport, point)) {
-        for (size_t i = 0; i < layout.monitorItems.size(); ++i) {
-            if (PtInRect(&layout.monitorItems[i], point)) {
-                return {FocusKind::Monitor, i};
-            }
-        }
-    }
-    if (PtInRect(&layout.autostart, point)) return {FocusKind::Autostart, 0};
-    return {};
-}
-
-RECT PopupView::RectForTarget(const FocusTarget& target, const Layout& layout) const {
-    switch (target.kind) {
-    case FocusKind::Power: return layout.power;
-    case FocusKind::Slider: return layout.sliderHit;
-    case FocusKind::SoftwareMode: return layout.softwareMode;
-    case FocusKind::HardwareMode: return layout.hardwareMode;
-    case FocusKind::AllDisplays: return layout.allDisplays;
-    case FocusKind::SelectedDisplays: return layout.selectedDisplays;
-    case FocusKind::Monitor:
-        if (target.monitorIndex < layout.monitorItems.size()) return layout.monitorItems[target.monitorIndex];
-        break;
-    case FocusKind::Autostart: return layout.autostart;
-    case FocusKind::None: break;
-    }
-    return {};
-}
-
-void PopupView::SetFocusTarget(FocusTarget target, bool keyboardFocus) {
-    m_focus = target;
-    m_showKeyboardFocus = keyboardFocus;
-    EnsureFocusedMonitorVisible();
-    UpdateAccessibleName();
-    InvalidateRect(m_hWnd, nullptr, FALSE);
-}
-
-void PopupView::MoveFocus(bool backwards) {
-    const std::vector<FocusTarget> order = FocusOrder();
-    if (order.empty()) {
-        return;
-    }
-
-    auto current = std::ranges::find(order, m_focus);
-    size_t index = current == order.end() ? 0 : static_cast<size_t>(current - order.begin());
-    if (backwards) {
-        index = index == 0 ? order.size() - 1 : index - 1;
-    } else {
-        index = (index + 1) % order.size();
-    }
-    SetFocusTarget(order[index], true);
-}
-
-void PopupView::EnsureFocusedMonitorVisible() {
-    if (!m_hWnd || m_focus.kind != FocusKind::Monitor || m_focus.monitorIndex >= m_state.monitors.size()) {
-        return;
-    }
-
-    Layout layout = BuildLayout();
-    const RECT item = layout.monitorItems[m_focus.monitorIndex];
-    if (item.top < layout.monitorViewport.top) {
-        m_scrollOffset -= layout.monitorViewport.top - item.top;
-    } else if (item.bottom > layout.monitorViewport.bottom) {
-        m_scrollOffset += item.bottom - layout.monitorViewport.bottom;
-    }
-    layout = BuildLayout();
-    m_scrollOffset = std::clamp(m_scrollOffset, 0, MaximumScroll(layout));
-}
-
-void PopupView::Activate(const FocusTarget& target) {
-    switch (target.kind) {
-    case FocusKind::Power:
-        m_state.enabled = !m_state.enabled;
-        if (m_actions.setEnabled) m_actions.setEnabled(m_state.enabled);
-        break;
-    case FocusKind::SoftwareMode:
-        m_state.mode = BrightnessMode::Software;
-        if (m_actions.setMode) m_actions.setMode(m_state.mode);
-        break;
-    case FocusKind::HardwareMode:
-        m_state.mode = BrightnessMode::Hardware;
-        if (m_actions.setMode) m_actions.setMode(m_state.mode);
-        break;
-    case FocusKind::AllDisplays:
-        m_state.selection.all = true;
-        if (m_actions.setSelection) m_actions.setSelection(m_state.selection);
-        break;
-    case FocusKind::SelectedDisplays:
-        m_state.selection.all = false;
-        if (m_state.selection.ids.empty() && !m_state.monitors.empty()) {
-            m_state.selection.ids.push_back(m_state.monitors.front().id);
-        }
-        if (m_actions.setSelection) m_actions.setSelection(m_state.selection);
-        break;
-    case FocusKind::Monitor:
-        if (target.monitorIndex < m_state.monitors.size()) {
-            const std::wstring& id = m_state.monitors[target.monitorIndex].id;
-            if (m_state.selection.all) {
-                m_state.selection.all = false;
-                m_state.selection.ids = {id};
-            } else {
-                auto selected = std::ranges::find(m_state.selection.ids, id);
-                if (selected == m_state.selection.ids.end()) {
-                    m_state.selection.ids.push_back(id);
-                } else if (m_state.selection.ids.size() > 1) {
-                    m_state.selection.ids.erase(selected);
-                }
-            }
-            if (m_actions.setSelection) m_actions.setSelection(m_state.selection);
-        }
-        break;
-    case FocusKind::Autostart:
-        m_state.autostart = !m_state.autostart;
-        if (m_actions.setAutostart) m_actions.setAutostart(m_state.autostart);
-        break;
-    case FocusKind::Slider:
-    case FocusKind::None:
-        break;
-    }
-
-    UpdateAccessibleName();
-    InvalidateRect(m_hWnd, nullptr, FALSE);
-}
-
-void PopupView::UpdateAccessibleName() {
-    if (!m_hWnd) {
-        return;
-    }
-
-    std::wstring name;
-    switch (m_focus.kind) {
-    case FocusKind::Power:
-        name = m_state.enabled ? L"Dimming on. Press Space to pause." : L"Dimming paused. Press Space to resume.";
-        break;
-    case FocusKind::Slider:
-        name = L"Brightness " + std::to_wstring(m_state.brightness) + L" percent. Use arrow keys to adjust.";
-        break;
-    case FocusKind::SoftwareMode:
-        name = m_state.mode == BrightnessMode::Software ? L"Software dimming, selected." : L"Software dimming.";
-        break;
-    case FocusKind::HardwareMode:
-        name = m_state.mode == BrightnessMode::Hardware ? L"Hardware DDC CI, selected." : L"Hardware DDC CI.";
-        break;
-    case FocusKind::AllDisplays:
-        name = m_state.selection.all ? L"All displays, selected." : L"All displays.";
-        break;
-    case FocusKind::SelectedDisplays:
-        name = !m_state.selection.all ? L"Selected displays, selected." : L"Selected displays.";
-        break;
-    case FocusKind::Monitor:
-        if (m_focus.monitorIndex < m_state.monitors.size()) {
-            const MonitorInfo& monitor = m_state.monitors[m_focus.monitorIndex];
-            name = L"Display " + std::to_wstring(m_focus.monitorIndex + 1) + L", " + monitor.name;
-            name += m_state.selection.Contains(monitor.id) ? L", included." : L", not included.";
-            name += monitor.hardwareBrightness ? L" DDC CI available." : L" DDC CI unavailable.";
-        }
-        break;
-    case FocusKind::Autostart:
-        name = m_state.autostart ? L"Start with Windows, on." : L"Start with Windows, off.";
-        break;
-    case FocusKind::None:
-        name = L"trenches";
-        break;
-    }
-
-    SetWindowText(m_hWnd, name.c_str());
-    if (IsVisible()) {
-        NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, m_hWnd, OBJID_WINDOW, CHILDID_SELF);
-    }
-}
-
-int PopupView::XToBrightness(int x, const Layout& layout) const {
-    const double ratio = static_cast<double>(x - layout.sliderLeft) /
-                         static_cast<double>(layout.sliderRight - layout.sliderLeft);
-    return ClampBrightness(static_cast<int>(std::clamp(ratio, 0.0, 1.0) * 99.0 + 1.0));
-}
-
-void PopupView::SetDisplayedBrightness(int percent) {
-    const int brightness = ClampBrightness(percent);
-    if (brightness == m_state.brightness) {
-        return;
-    }
-    m_state.brightness = brightness;
-    UpdateAccessibleName();
-    InvalidateRect(m_hWnd, nullptr, FALSE);
-}
-
-void PopupView::QueueBrightnessCommit() {
-    m_hasPendingBrightness = true;
-    KillTimer(m_hWnd, kBrightnessTimerId);
-    SetTimer(m_hWnd, kBrightnessTimerId, kBrightnessDelayMs, nullptr);
-}
-
-void PopupView::CommitBrightness() {
-    if (!m_hasPendingBrightness) {
-        return;
-    }
-    m_hasPendingBrightness = false;
-    KillTimer(m_hWnd, kBrightnessTimerId);
-    if (m_actions.setBrightness) {
-        m_actions.setBrightness(m_state.brightness);
-    }
-}
-
-void PopupView::ResetAutoHideTimer() {
-    if (!m_hWnd || !IsVisible()) {
-        return;
-    }
-    KillTimer(m_hWnd, kAutoHideTimerId);
-    SetTimer(m_hWnd, kAutoHideTimerId, kAutoHideDelayMs, nullptr);
-}
-
-bool PopupView::IsCursorOverWindow() const {
-    if (!m_hWnd) {
+    auto& r = *m_impl;
+    HWND window = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP,
+        kWindowClass, L"trenches", WS_POPUP, 0, 0, 376, 80, nullptr, nullptr, r.instance, this);
+    if (!window) {
+        const DWORD error = GetLastError(); r.renderError = error ? HRESULT_FROM_WIN32(error) : E_FAIL;
         return false;
     }
+    r.MeasureMonitor(true); r.Targets(); r.Position();
+    const HRESULT hr = r.InitializeRenderer();
+    if (FAILED(hr)) { r.renderError = hr; return false; }
+    r.CreateTooltip(); return true;
+}
+void PopupView::Toggle(POINT monitorPoint, bool keyboardInvoked) {
+    (void)monitorPoint;
+    auto& r = *m_impl;
+    if (!r.window) return;
+    if (IsVisible() && !r.hiding) { Hide(true); return; }
+    r.MeasureMonitor(true); r.Targets();
+    if (!IsVisible()) { r.width.Snap(r.width.Target()); r.height.Snap(r.height.Target()); }
+    r.Position();
+    if (!r.renderer) {
+        const HRESULT result = r.InitializeRenderer();
+        if (FAILED(result)) { r.GraphicsFailure(result); return; }
+    } else {
+        const HRESULT result = r.renderer->Resize(r.dpi, r.maximumHeight);
+        if (FAILED(result)) { r.GraphicsFailure(result); return; }
+    }
+    if (!IsVisible()) {
+        r.visibility.Snap(r.Animate() ? 0.0 : 1.0);
+        const HRESULT result = r.renderer->Conceal();
+        if (FAILED(result)) { r.GraphicsFailure(result); return; }
+    }
+    r.hiding = false; r.visibility.Target(1.0); r.lastFrame = {};
+    r.wheelId.clear(); r.wheelRemainder = 0;
+    r.keyboardMode = keyboardInvoked; r.focus = {island::Control::Slider, r.Primary()};
+    ShowWindow(r.window, SW_SHOWNOACTIVATE);
+    // Keyboard navigation uses temporary Ctrl+Alt shortcuts, rather than taking
+    // focus or intercepting the foreground application's unmodified key events.
+    if (keyboardInvoked) r.RegisterShortcuts();
+    r.StartMouseInput(); r.ResetDismissal();
+    r.AccessibleName(); r.RequestFrame();
+}
+void PopupView::Hide(bool animated) {
+    auto& r = *m_impl;
+    if (!r.window) return;
+    r.hiding = true; r.StopDismissal(); r.StopMouseInput();
+    r.UnregisterShortcuts();
+    r.FinishDrag(); r.Tooltip(false);
+    if (animated && r.Animate() && IsVisible() && r.renderer) {
+        r.hiding = true; r.visibility.Target(0.0); r.RequestFrame();
+    } else {
+        r.hiding = false; r.visibility.Snap(0);
+        r.width.Snap(std::min(island::kWidth, r.maximumWidth));
+        r.height.Snap(island::PanelHeight(r.state.monitors.size(), r.maximumHeight, r.maximumWidth));
+        r.keyboardMode = false;
+        if (r.renderer) {
+            const HRESULT result = r.renderer->Conceal();
+            if (FAILED(result)) r.GraphicsFailure(result);
+        }
+        ShowWindow(r.window, SW_HIDE); r.dirty = false; r.lastFrame = {};
+        KillTimer(r.window, kGraphicsTimer);
+    }
+}
+void PopupView::SetState(PopupState state) {
+    auto& r = *m_impl;
+    const bool monitorFocus = r.focus.control == island::Control::Slider || r.focus.control == island::Control::Monitor;
+    const std::wstring focusedId = monitorFocus && r.focus.monitor < r.state.monitors.size()
+        ? r.state.monitors[r.focus.monitor].id : L"";
+    for (auto& monitor : state.monitors) {
+        monitor.brightness = ClampBrightness(monitor.brightness);
+        const auto pending = r.pending.find(monitor.id);
+        if (pending != r.pending.end() && (state.mode == BrightnessMode::Software ||
+            (monitor.hardwareBrightness && monitor.hardwareStatus == HardwareStatus::Available))) monitor.brightness = pending->second;
+    }
+    r.state = std::move(state);
+    std::erase_if(r.pending, [&](const auto& entry) {
+        const auto monitor = std::ranges::find(r.state.monitors, entry.first, &MonitorInfo::id);
+        return monitor == r.state.monitors.end() || !r.Adjustable(static_cast<size_t>(monitor - r.state.monitors.begin()));
+    });
+    std::erase_if(r.rows, [&](const auto& entry) {
+        return std::ranges::find(r.state.monitors, entry.first, &MonitorInfo::id) == r.state.monitors.end();
+    });
+    for (const auto& monitor : r.state.monitors) {
+        const auto [motion, inserted] = r.rows.try_emplace(monitor.id);
+        if (inserted) motion->second.slider.Snap(monitor.brightness);
+        else if (!r.dragging || r.dragId != monitor.id) motion->second.slider.Target(monitor.brightness);
+    }
+    if (r.dragging) {
+        const auto found = std::ranges::find(r.state.monitors, r.dragId, &MonitorInfo::id);
+        if (found == r.state.monitors.end() || !r.Adjustable(static_cast<size_t>(found - r.state.monitors.begin())))
+            r.FinishDrag(false);
+        else r.pressed.monitor = static_cast<size_t>(found - r.state.monitors.begin());
+    }
+    if (!focusedId.empty()) {
+        const auto found = std::ranges::find(r.state.monitors, focusedId, &MonitorInfo::id);
+        r.focus = found == r.state.monitors.end() ? island::Target{island::Control::Power}
+            : island::Target{r.focus.control, static_cast<size_t>(found - r.state.monitors.begin())};
+    }
+    if (r.focus.monitor >= r.state.monitors.size()) r.focus = {island::Control::Power};
+    r.mode.Target(r.state.mode == BrightnessMode::Hardware ? 1.0 : 0.0);
+    if (!r.window) return;
+    r.MeasureMonitor(true); r.Targets();
+    r.scroll = std::clamp(r.scroll, 0.0f, r.Layout().MaximumScroll());
+    r.Tooltip(false); r.AccessibleName(); if (IsVisible()) r.Position();
+}
+void PopupView::SetPreferences(island::Preferences preferences) {
+    auto& r = *m_impl;
+    r.preferences = preferences; r.RefreshMotionPreference();
+    if (r.renderer) r.renderer->RefreshTheme();
+    r.Targets(); r.RequestFrame();
+}
+HANDLE PopupView::FrameWaitHandle() const {
+    const auto& r = *m_impl;
+    return IsVisible() && r.renderer && (r.dirty || r.Moving()) ? r.clock.Ready() : nullptr;
+}
+void PopupView::RenderFrame() {
+    auto& r = *m_impl;
+    if (!r.renderer || !IsVisible()) return;
+    LARGE_INTEGER now{}; QueryPerformanceCounter(&now);
+    const double seconds = r.lastFrame.QuadPart ? static_cast<double>(now.QuadPart - r.lastFrame.QuadPart) /
+        static_cast<double>(r.frequency.QuadPart) : 0.0;
+    r.lastFrame = now;
+    auto advance = [&](island::Spring& spring, double epsilon = 0.001) {
+        if (r.Animate()) spring.Advance(seconds, epsilon); else spring.Snap(spring.Target());
+    };
+    advance(r.width, 0.05); advance(r.height, 0.05); advance(r.visibility);
+    advance(r.mode); advance(r.feedback);
+    for (auto& [id, motion] : r.rows) {
+        advance(motion.slider, 0.05); advance(motion.number);
+        if (motion.number.Target() > 0.5 && motion.number.Value() > 0.9) motion.number.Target(0.0);
+    }
+    r.Position();
+    island::Frame frame;
+    frame.state = &r.state; frame.layout = r.Layout();
+    frame.presentation = r.Presentation();
+    frame.radius = std::min(32.0f, static_cast<float>(r.height.Value()) * 0.14f);
+    frame.modePosition = static_cast<float>(r.mode.Value());
+    for (const auto& monitor : r.state.monitors) {
+        const auto& motion = r.rows.at(monitor.id);
+        frame.rowValues.push_back(static_cast<float>(motion.slider.Value()));
+        frame.rowFeedback.push_back(static_cast<float>(motion.number.Value()));
+    }
+    frame.hot = r.pressed.control != island::Control::None ? r.pressed : r.hover;
+    frame.hotScale = static_cast<float>(r.feedback.Value());
+    frame.focus = r.focus; frame.keyboardFocus = r.keyboardMode; frame.preferences = r.preferences;
+    const HRESULT result = r.renderer->Draw(frame);
+    if (FAILED(result)) { r.GraphicsFailure(result); return; }
+    r.dirty = false;
+    if (r.hiding && !r.visibility.Active()) Hide(false);
+    if (r.Moving() && IsVisible()) r.clock.Request();
+    if (!r.Moving()) r.lastFrame = {};
+}
 
-    POINT cursor{};
+void PopupView::NotifyPointerDown(POINT screenPoint) {
+    auto& r = *m_impl;
+    if (!IsVisible() || r.hiding || r.contextMenu || GetCapture() == r.window) return;
+    if (r.actions.isTrayPoint && r.actions.isTrayPoint(screenPoint)) return;
     RECT window{};
-    return GetCursorPos(&cursor) && GetWindowRect(m_hWnd, &window) && PtInRect(&window, cursor);
+    if (!GetWindowRect(r.window, &window)) return;
+    const auto point = r.ClientPoint(static_cast<float>(screenPoint.x) - static_cast<float>(window.left),
+                                    static_cast<float>(screenPoint.y) - static_cast<float>(window.top));
+    const float radius = std::min(32.0f, static_cast<float>(r.height.Value()) * 0.14f);
+    if (!island::InsideSquircle(point, r.Layout().shell, radius, true)) Hide(true);
+    else r.ResetDismissal();
 }
 
-void PopupView::ScrollMonitors(int direction) {
-    Layout layout = BuildLayout();
-    m_scrollOffset = std::clamp(
-        m_scrollOffset + direction * (layout.monitorItemHeight + layout.monitorItemGap),
-        0,
-        MaximumScroll(layout));
-    InvalidateRect(m_hWnd, &layout.monitorViewport, FALSE);
-}
-
-int PopupView::MaximumScroll(const Layout& layout) const {
-    if (m_state.monitors.empty()) {
-        return 0;
-    }
-    const int contentHeight = static_cast<int>(m_state.monitors.size()) * layout.monitorItemHeight +
-                              static_cast<int>(m_state.monitors.size() - 1) * layout.monitorItemGap;
-    return (std::max)(0, contentHeight - static_cast<int>(layout.monitorViewport.bottom - layout.monitorViewport.top));
-}
-
-LRESULT PopupView::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    auto& r = *m_impl;
     switch (message) {
-    case WM_PAINT: {
-        PAINTSTRUCT paint{};
-        HDC target = BeginPaint(hWnd, &paint);
-        RECT client{};
-        GetClientRect(hWnd, &client);
-        const int width = client.right - client.left;
-        const int height = client.bottom - client.top;
-        const int dpi = GetDpiForHwnd(hWnd);
-        const Layout layout = BuildLayout();
-        const Palette palette = GetPalette();
-
-        MemoryPaintDc buffer(target, width, height);
-        if (buffer.Get()) {
-            using namespace Gdiplus;
-            Graphics graphics(buffer.Get());
-            graphics.SetSmoothingMode(SmoothingModeAntiAlias);
-            graphics.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
-
-            FontFamily family(L"Bahnschrift");
-            Font eyebrow(&family, 8.0f, FontStyleRegular, UnitPoint);
-            Font title(&family, 19.0f, FontStyleBold, UnitPoint);
-            Font section(&family, 9.0f, FontStyleBold, UnitPoint);
-            Font body(&family, 10.0f, FontStyleRegular, UnitPoint);
-            Font bodyBold(&family, 10.0f, FontStyleBold, UnitPoint);
-            Font detail(&family, 8.5f, FontStyleRegular, UnitPoint);
-            Font value(&family, 38.0f, FontStyleBold, UnitPoint);
-
-            SolidBrush background(ToGdiColor(palette.background));
-            graphics.FillRectangle(&background, 0, 0, width, height);
-            graphics.SetSmoothingMode(SmoothingModeNone);
-            Pen windowBorder(ToGdiColor(palette.border), 1.0f);
-            graphics.DrawRectangle(&windowBorder, 0, 0, width - 1, height - 1);
-
-            const int padding = ScaleByDpi(15, dpi);
-            DrawText(graphics, L"trenches", eyebrow,
-                { padding, ScaleByDpi(20, dpi), padding + ScaleByDpi(70, dpi), ScaleByDpi(68, dpi) },
-                palette.muted);
-
-            DrawText(graphics, m_state.hotkeyAvailable ? L"CTRL+ALT+B" : L"TRAY CLICK", eyebrow,
-                { padding + ScaleByDpi(75, dpi), ScaleByDpi(20, dpi), layout.power.left - ScaleByDpi(12, dpi), ScaleByDpi(68, dpi) },
-                palette.muted);
-
-            const bool powerHovered = m_hover.kind == FocusKind::Power;
-            FillAndBorder(
-                graphics,
-                layout.power,
-                m_state.enabled ? palette.accent : (powerHovered ? palette.raised : palette.surface),
-                m_state.enabled ? palette.accent : palette.border);
-            if (m_state.enabled) {
-                SolidBrush icon(ToGdiColor(palette.accentText));
-                const int barWidth = ScaleByDpi(4, dpi);
-                const int barHeight = ScaleByDpi(16, dpi);
-                const int centerX = (layout.power.left + layout.power.right) / 2;
-                const int centerY = (layout.power.top + layout.power.bottom) / 2;
-                graphics.FillRectangle(&icon, centerX - ScaleByDpi(7, dpi), centerY - barHeight / 2, barWidth, barHeight);
-                graphics.FillRectangle(&icon, centerX + ScaleByDpi(3, dpi), centerY - barHeight / 2, barWidth, barHeight);
-            } else {
-                PointF triangle[] = {
-                    {static_cast<REAL>(layout.power.left + ScaleByDpi(17, dpi)), static_cast<REAL>(layout.power.top + ScaleByDpi(13, dpi))},
-                    {static_cast<REAL>(layout.power.left + ScaleByDpi(17, dpi)), static_cast<REAL>(layout.power.bottom - ScaleByDpi(13, dpi))},
-                    {static_cast<REAL>(layout.power.right - ScaleByDpi(13, dpi)), static_cast<REAL>((layout.power.top + layout.power.bottom) / 2)}
-                };
-                SolidBrush icon(ToGdiColor(palette.text));
-                graphics.FillPolygon(&icon, triangle, 3);
-            }
-
-            FillAndBorder(graphics, layout.brightnessCard, palette.surface, palette.border);
-            DrawText(graphics, L"Brightness", section,
-                     {layout.brightnessCard.left + ScaleByDpi(18, dpi), layout.brightnessCard.top + ScaleByDpi(10, dpi),
-                      layout.brightnessCard.left + ScaleByDpi(104, dpi), layout.brightnessCard.top + ScaleByDpi(34, dpi)},
-                     palette.muted);
-            DrawText(graphics, m_state.enabled ? L"Active" : L"Paused", detail,
-                     {layout.brightnessCard.left + ScaleByDpi(106, dpi), layout.brightnessCard.top + ScaleByDpi(10, dpi),
-                      layout.brightnessCard.right - ScaleByDpi(140, dpi), layout.brightnessCard.top + ScaleByDpi(34, dpi)},
-                     m_state.enabled ? palette.accent : palette.muted);
-            DrawText(graphics, std::to_wstring(m_state.brightness) + L"%", value,
-                     {layout.brightnessCard.right - ScaleByDpi(150, dpi), layout.brightnessCard.top + ScaleByDpi(10, dpi),
-                      layout.brightnessCard.right - ScaleByDpi(18, dpi), layout.brightnessCard.top + ScaleByDpi(70, dpi)},
-                     m_state.enabled ? palette.text : palette.disabled,
-                     StringAlignmentFar);
-
-            const double sliderRatio = (m_state.brightness - kMinBrightness) / 99.0;
-            const int thumbX = layout.sliderLeft + static_cast<int>((layout.sliderRight - layout.sliderLeft) * sliderRatio);
-            const int trackHeight = ScaleByDpi(4, dpi);
-            SolidBrush trackBrush(ToGdiColor(palette.raised));
-            graphics.FillRectangle(&trackBrush, layout.sliderLeft, layout.sliderY - trackHeight / 2,
-                                   layout.sliderRight - layout.sliderLeft, trackHeight);
-            SolidBrush activeTrack(ToGdiColor(m_state.enabled ? palette.accent : palette.disabled));
-            graphics.FillRectangle(&activeTrack, layout.sliderLeft, layout.sliderY - trackHeight / 2,
-                                   thumbX - layout.sliderLeft, trackHeight);
-            const int thumbSize = ScaleByDpi(14, dpi);
-            SolidBrush thumbBrush(ToGdiColor(m_state.enabled ? palette.text : palette.disabled));
-            graphics.FillRectangle(&thumbBrush, thumbX - thumbSize / 2, layout.sliderY - thumbSize / 2, thumbSize, thumbSize);
-
-            DrawText(graphics, L"Method", section,
-                     {padding, layout.softwareMode.top - ScaleByDpi(27, dpi), width - padding, layout.softwareMode.top - ScaleByDpi(5, dpi)},
-                     palette.muted);
-
-            auto drawChoice = [&](const RECT& rect, bool selected, bool hovered, const std::wstring& label, const std::wstring& detailText) {
-                const COLORREF fill = selected ? palette.accent : (hovered ? palette.raised : palette.surface);
-                const COLORREF border = selected ? palette.accent : palette.border;
-                const COLORREF primary = selected ? palette.accentText : palette.text;
-                const COLORREF secondary = selected ? palette.accentText : palette.muted;
-                FillAndBorder(graphics, rect, fill, border);
-                DrawText(graphics, label, bodyBold,
-                         {rect.left + ScaleByDpi(14, dpi), rect.top + ScaleByDpi(3, dpi), rect.right - ScaleByDpi(12, dpi), rect.top + ScaleByDpi(25, dpi)},
-                         primary);
-                DrawText(graphics, detailText, detail,
-                         {rect.left + ScaleByDpi(14, dpi), rect.top + ScaleByDpi(22, dpi), rect.right - ScaleByDpi(12, dpi), rect.bottom - ScaleByDpi(2, dpi)},
-                         secondary);
-            };
-            drawChoice(layout.softwareMode, m_state.mode == BrightnessMode::Software,
-                       m_hover.kind == FocusKind::SoftwareMode, L"Software", L"Per-display overlay");
-            drawChoice(layout.hardwareMode, m_state.mode == BrightnessMode::Hardware,
-                       m_hover.kind == FocusKind::HardwareMode, L"Hardware", L"DDC / CI");
-
-            size_t selectedCount = 0;
-            size_t hardwareCount = 0;
-            for (const MonitorInfo& monitor : m_state.monitors) {
-                if (m_state.selection.Contains(monitor.id)) {
-                    ++selectedCount;
-                    if (monitor.hardwareBrightness) ++hardwareCount;
-                }
-            }
-            std::wstring displaySummary = L"Displays  ·  " + std::to_wstring(selectedCount) + L" / " +
-                                          std::to_wstring(m_state.monitors.size());
-            if (m_state.mode == BrightnessMode::Hardware && selectedCount > 0 && hardwareCount < selectedCount) {
-                displaySummary += L"  ·  DDC " + std::to_wstring(hardwareCount) + L" / " + std::to_wstring(selectedCount);
-            }
-            DrawText(graphics, displaySummary, section,
-                     {padding, layout.allDisplays.top - ScaleByDpi(27, dpi), width - padding, layout.allDisplays.top - ScaleByDpi(5, dpi)},
-                     palette.muted);
-
-            drawChoice(layout.allDisplays, m_state.selection.all,
-                       m_hover.kind == FocusKind::AllDisplays, L"All displays", L"Keep every screen in sync");
-            drawChoice(layout.selectedDisplays, !m_state.selection.all,
-                       m_hover.kind == FocusKind::SelectedDisplays, L"Selected", L"Choose screens below");
-
-            const GraphicsState clipState = graphics.Save();
-            graphics.SetClip(PixelRect(layout.monitorViewport));
-            for (size_t i = 0; i < m_state.monitors.size(); ++i) {
-                const RECT& item = layout.monitorItems[i];
-                if (!Intersects(item, layout.monitorViewport)) {
-                    continue;
-                }
-
-                const MonitorInfo& monitor = m_state.monitors[i];
-                const bool included = m_state.selection.Contains(monitor.id);
-                const bool hovered = m_hover.kind == FocusKind::Monitor && m_hover.monitorIndex == i;
-                FillAndBorder(graphics, item, hovered ? palette.raised : palette.surface,
-                              included ? palette.accentDim : palette.border);
-
-                RECT iconRect = {
-                    item.left + ScaleByDpi(14, dpi),
-                    item.top + ScaleByDpi(12, dpi),
-                    item.left + ScaleByDpi(38, dpi),
-                    item.bottom - ScaleByDpi(9, dpi)
-                };
-                DrawMonitorIcon(graphics, iconRect, included ? palette.accent : palette.muted, dpi);
-
-                std::wstring monitorLabel = L"Display " + std::to_wstring(i + 1) + L"  ·  " + monitor.name;
-                DrawText(graphics, monitorLabel, bodyBold,
-                         {item.left + ScaleByDpi(52, dpi), item.top + ScaleByDpi(2, dpi), item.right - ScaleByDpi(46, dpi), item.top + ScaleByDpi(24, dpi)},
-                         included ? palette.text : palette.muted);
-
-                const int monitorWidth = monitor.bounds.right - monitor.bounds.left;
-                const int monitorHeight = monitor.bounds.bottom - monitor.bounds.top;
-                std::wstring monitorDetail = std::to_wstring(monitorWidth) + L"x" + std::to_wstring(monitorHeight);
-                if (monitor.primary) monitorDetail += L"  ·  Primary";
-                monitorDetail += monitor.hardwareBrightness ? L"  ·  DDC/CI" : L"  ·  No DDC/CI";
-                DrawText(graphics, monitorDetail, detail,
-                         {item.left + ScaleByDpi(52, dpi), item.top + ScaleByDpi(21, dpi), item.right - ScaleByDpi(46, dpi), item.bottom - ScaleByDpi(2, dpi)},
-                         monitor.hardwareBrightness ? palette.muted : palette.disabled);
-
-                RECT checkRect = {
-                    item.right - ScaleByDpi(31, dpi),
-                    item.top + ScaleByDpi(14, dpi),
-                    item.right - ScaleByDpi(17, dpi),
-                    item.top + ScaleByDpi(28, dpi)
-                };
-                FillAndBorder(graphics, checkRect, included ? palette.accent : palette.background,
-                              included ? palette.accent : palette.border);
-                if (included) DrawCheck(graphics, checkRect, palette.accentText, dpi);
-            }
-
-            if (m_showKeyboardFocus && GetFocus() == hWnd && m_focus.kind == FocusKind::Monitor) {
-                RECT focusRect = RectForTarget(m_focus, layout);
-                focusRect = Inset(focusRect, ScaleByDpi(2, dpi));
-                Pen focusPen(ToGdiColor(palette.accent), static_cast<REAL>((std::max)(2, ScaleByDpi(2, dpi))));
-                graphics.DrawRectangle(
-                    &focusPen,
-                    static_cast<INT>(focusRect.left),
-                    static_cast<INT>(focusRect.top),
-                    static_cast<INT>(focusRect.right - focusRect.left - 1),
-                    static_cast<INT>(focusRect.bottom - focusRect.top - 1));
-            }
-            graphics.Restore(clipState);
-
-            const bool autoHovered = m_hover.kind == FocusKind::Autostart;
-            FillAndBorder(graphics, layout.autostart, autoHovered ? palette.raised : palette.surface, palette.border);
-            DrawText(graphics, L"Start with Windows", bodyBold,
-                     {layout.autostart.left + ScaleByDpi(14, dpi), layout.autostart.top + ScaleByDpi(3, dpi),
-                      layout.autostart.right - ScaleByDpi(48, dpi), layout.autostart.top + ScaleByDpi(26, dpi)},
-                     palette.text);
-            DrawText(graphics, L"Launch quietly in the notification area", detail,
-                     {layout.autostart.left + ScaleByDpi(14, dpi), layout.autostart.top + ScaleByDpi(23, dpi),
-                      layout.autostart.right - ScaleByDpi(48, dpi), layout.autostart.bottom - ScaleByDpi(2, dpi)},
-                     palette.muted);
-            RECT autoCheck = {
-                layout.autostart.right - ScaleByDpi(34, dpi),
-                layout.autostart.top + ScaleByDpi(15, dpi),
-                layout.autostart.right - ScaleByDpi(18, dpi),
-                layout.autostart.top + ScaleByDpi(31, dpi)
-            };
-            FillAndBorder(graphics, autoCheck, m_state.autostart ? palette.accent : palette.background,
-                          m_state.autostart ? palette.accent : palette.border);
-            if (m_state.autostart) DrawCheck(graphics, autoCheck, palette.accentText, dpi);
-
-            if (m_showKeyboardFocus && GetFocus() == hWnd && m_focus.kind != FocusKind::Monitor && m_focus.kind != FocusKind::None) {
-                RECT focusRect = RectForTarget(m_focus, layout);
-                focusRect = Inset(focusRect, ScaleByDpi(2, dpi));
-                Pen focusPen(ToGdiColor(palette.accent), static_cast<REAL>((std::max)(2, ScaleByDpi(2, dpi))));
-                graphics.DrawRectangle(
-                    &focusPen,
-                    static_cast<INT>(focusRect.left),
-                    static_cast<INT>(focusRect.top),
-                    static_cast<INT>(focusRect.right - focusRect.left - 1),
-                    static_cast<INT>(focusRect.bottom - focusRect.top - 1));
-            }
-
-            BitBlt(target, 0, 0, width, height, buffer.Get(), 0, 0, SRCCOPY);
-        }
-
-        EndPaint(hWnd, &paint);
-        return 0;
-    }
-
-    case WM_LBUTTONDOWN: {
-        ResetAutoHideTimer();
-        const Layout layout = BuildLayout();
-        POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-        const FocusTarget target = HitTest(point, layout);
-        SetFocus(hWnd);
-        SetFocusTarget(target, false);
-        if (target.kind == FocusKind::Slider && m_state.enabled) {
-            m_isDragging = true;
-            SetCapture(hWnd);
-            SetDisplayedBrightness(XToBrightness(point.x, layout));
-            QueueBrightnessCommit();
-        } else if (target.kind != FocusKind::None) {
-            m_pressed = target;
-            SetCapture(hWnd);
-            InvalidateRect(hWnd, nullptr, FALSE);
-        }
-        return 0;
-    }
-
-    case WM_MOUSEMOVE: {
-        ResetAutoHideTimer();
-        if (!m_trackingMouse) {
-            TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, hWnd, 0};
-            TrackMouseEvent(&tracking);
-            m_trackingMouse = true;
-        }
-
-        const Layout layout = BuildLayout();
-        POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-        const FocusTarget hover = HitTest(point, layout);
-        if (!(hover == m_hover)) {
-            m_hover = hover;
-            InvalidateRect(hWnd, nullptr, FALSE);
-        }
-
-        if (m_isDragging) {
-            SetDisplayedBrightness(XToBrightness(point.x, layout));
-            QueueBrightnessCommit();
-        }
-        return 0;
-    }
-
-    case WM_MOUSELEAVE:
-        m_trackingMouse = false;
-        m_hover = {};
-        ResetAutoHideTimer();
-        InvalidateRect(hWnd, nullptr, FALSE);
-        return 0;
-
-    case WM_LBUTTONUP: {
-        ResetAutoHideTimer();
-        const Layout layout = BuildLayout();
-        POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-        if (m_isDragging) {
-            m_isDragging = false;
-            CommitBrightness();
-        } else if (m_pressed.kind != FocusKind::None && HitTest(point, layout) == m_pressed) {
-            Activate(m_pressed);
-        }
-        m_pressed = {};
-        if (GetCapture() == hWnd) ReleaseCapture();
-        InvalidateRect(hWnd, nullptr, FALSE);
-        return 0;
-    }
-
-    case WM_MOUSEWHEEL: {
-        ResetAutoHideTimer();
-        POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-        ScreenToClient(hWnd, &point);
-        const Layout layout = BuildLayout();
-        const int direction = GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? -1 : 1;
-        if (PtInRect(&layout.monitorViewport, point) && MaximumScroll(layout) > 0) {
-            ScrollMonitors(direction);
-        } else if (m_state.enabled) {
-            SetFocusTarget({FocusKind::Slider, 0}, false);
-            SetDisplayedBrightness(m_state.brightness - direction);
-            QueueBrightnessCommit();
-        }
-        return 0;
-    }
-
-    case WM_KEYDOWN: {
-        ResetAutoHideTimer();
-        if (wParam == VK_ESCAPE) {
-            Hide();
-            return 0;
-        }
-        if (wParam == VK_TAB) {
-            MoveFocus((GetKeyState(VK_SHIFT) & 0x8000) != 0);
-            return 0;
-        }
-        if (wParam == VK_SPACE || wParam == VK_RETURN) {
-            Activate(m_focus);
-            return 0;
-        }
-
-        if (m_focus.kind == FocusKind::Slider && m_state.enabled) {
-            int next = m_state.brightness;
-            if (wParam == VK_LEFT || wParam == VK_DOWN) --next;
-            else if (wParam == VK_RIGHT || wParam == VK_UP) ++next;
-            else if (wParam == VK_PRIOR) next += 10;
-            else if (wParam == VK_NEXT) next -= 10;
-            else if (wParam == VK_HOME) next = kMinBrightness;
-            else if (wParam == VK_END) next = kMaxBrightness;
-            else break;
-            SetFocusTarget(m_focus, true);
-            SetDisplayedBrightness(next);
-            QueueBrightnessCommit();
-            return 0;
-        }
-
-        if ((m_focus.kind == FocusKind::SoftwareMode || m_focus.kind == FocusKind::HardwareMode) &&
-            (wParam == VK_LEFT || wParam == VK_RIGHT)) {
-            SetFocusTarget({wParam == VK_LEFT ? FocusKind::SoftwareMode : FocusKind::HardwareMode, 0}, true);
-            Activate(m_focus);
-            return 0;
-        }
-        if ((m_focus.kind == FocusKind::AllDisplays || m_focus.kind == FocusKind::SelectedDisplays) &&
-            (wParam == VK_LEFT || wParam == VK_RIGHT)) {
-            SetFocusTarget({wParam == VK_LEFT ? FocusKind::AllDisplays : FocusKind::SelectedDisplays, 0}, true);
-            Activate(m_focus);
-            return 0;
-        }
-        if (m_focus.kind == FocusKind::Monitor && !m_state.monitors.empty() &&
-            (wParam == VK_UP || wParam == VK_DOWN)) {
-            size_t index = m_focus.monitorIndex;
-            if (wParam == VK_UP && index > 0) --index;
-            if (wParam == VK_DOWN && index + 1 < m_state.monitors.size()) ++index;
-            SetFocusTarget({FocusKind::Monitor, index}, true);
-            return 0;
-        }
-        break;
-    }
-
-    case WM_GETDLGCODE:
-        return DLGC_WANTALLKEYS;
-
-    case WM_TIMER:
-        if (wParam == kBrightnessTimerId) {
-            CommitBrightness();
-            return 0;
-        }
-        if (wParam == kAutoHideTimerId) {
-            if (m_isDragging || IsCursorOverWindow()) {
-                ResetAutoHideTimer();
-            } else {
-                Hide(true);
-            }
-            return 0;
-        }
-        break;
-
-    case WM_SETCURSOR:
-        if (LOWORD(lParam) == HTCLIENT) {
+    case WM_INPUT: {
+        RAWINPUT input{};
+        UINT bytes = sizeof(input);
+        const UINT read = GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, &input, &bytes, sizeof(RAWINPUTHEADER));
+        constexpr USHORT downs = RI_MOUSE_LEFT_BUTTON_DOWN | RI_MOUSE_RIGHT_BUTTON_DOWN | RI_MOUSE_MIDDLE_BUTTON_DOWN |
+            RI_MOUSE_BUTTON_4_DOWN | RI_MOUSE_BUTTON_5_DOWN;
+        if (read != static_cast<UINT>(-1) && read >= offsetof(RAWINPUT, data) + sizeof(RAWMOUSE) &&
+            input.header.dwType == RIM_TYPEMOUSE && (input.data.mouse.usButtonFlags & downs) != 0) {
             POINT point{};
-            GetCursorPos(&point);
-            ScreenToClient(hWnd, &point);
-            const FocusTarget target = HitTest(point, BuildLayout());
-            SetCursor(LoadCursor(nullptr, target.kind == FocusKind::None ? IDC_ARROW : IDC_HAND));
-            return TRUE;
+            if (GetCursorPos(&point)) NotifyPointerDown(point);
         }
-        break;
-
-    case WM_ACTIVATE:
-        if (LOWORD(wParam) == WA_INACTIVE && GetTickCount64() - m_showTime > 200) {
-            Hide();
+        // Foreground WM_INPUT requires DefWindowProc cleanup, including when a
+        // packet cannot be read. Background input must not consume the click.
+        return GET_RAWINPUT_CODE_WPARAM(wParam) == RIM_INPUT ? DefWindowProcW(window, message, wParam, lParam) : 0;
+    }
+    case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: ValidateRect(window, nullptr); r.RequestFrame(); return 0;
+    case WM_SIZE: r.RequestFrame(); return 0;
+    case WM_NCHITTEST: {
+        POINT pixel{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}; ScreenToClient(window, &pixel);
+        const auto point = r.Mouse(MAKELPARAM(pixel.x, pixel.y));
+        const float radius = std::min(32.0f, static_cast<float>(r.height.Value()) * 0.14f);
+        return island::InsideSquircle(point, r.Layout().shell, radius, true) ? HTCLIENT : HTTRANSPARENT;
+    }
+    case WM_DPICHANGED:
+        r.dpi = HIWORD(wParam); r.MeasureMonitor(false); r.Targets(); r.Position(); r.lastFrame = {};
+        if (r.renderer) {
+            const HRESULT result = r.renderer->Resize(r.dpi, r.maximumHeight);
+            if (FAILED(result)) r.GraphicsFailure(result);
+        }
+        r.RequestFrame(); return 0;
+    case WM_DISPLAYCHANGE:
+        r.MeasureMonitor(true); r.Targets(); r.Position(); r.lastFrame = {};
+        if (r.renderer) {
+            const HRESULT result = r.renderer->Resize(r.dpi, r.maximumHeight);
+            if (FAILED(result)) r.GraphicsFailure(result);
         }
         return 0;
-
-    case WM_KILLFOCUS:
-        if (GetTickCount64() - m_showTime > 200) {
-            Hide();
-        }
-        return 0;
-
-    case WM_SETFOCUS:
     case WM_SETTINGCHANGE:
     case WM_THEMECHANGED:
-        InvalidateRect(hWnd, nullptr, FALSE);
+        r.RefreshMotionPreference(); if (r.renderer) r.renderer->RefreshTheme(); r.RequestFrame(); return 0;
+    case WM_POWERBROADCAST:
+        if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND) {
+            r.lastFrame = {}; r.RequestFrame();
+        }
+        return TRUE;
+    case WM_TIMER:
+        if (wParam == kBrightnessTimer) r.CommitBrightness();
+        else if (wParam == kDismissTimer) {
+            KillTimer(window, kDismissTimer); r.dismissTimer = false;
+            const auto now = GetTickCount64();
+            if (r.dismissal.Expired(now)) Hide(true);
+            else if (const UINT remaining = r.dismissal.Remaining(now))
+                r.dismissTimer = SetTimer(window, kDismissTimer, remaining, nullptr) != 0;
+        }
+        else if (wParam == kGraphicsTimer) {
+            KillTimer(window, kGraphicsTimer);
+            const UINT retries = r.graphicsRetries;
+            const HRESULT result = r.InitializeRenderer();
+            if (FAILED(result)) { r.graphicsRetries = retries; r.GraphicsFailure(result); }
+            else r.RequestFrame();
+        }
         return 0;
-
-    case WM_NCDESTROY:
-        SetWindowLongPtr(hWnd, GWLP_USERDATA, 0);
-        if (hWnd == m_hWnd) m_hWnd = nullptr;
+    case WM_MOUSEMOVE: {
+        const auto point = r.Mouse(lParam);
+        POINT screen{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}; ClientToScreen(window, &screen);
+        if (!r.lastPointer || r.lastPointer->x != screen.x || r.lastPointer->y != screen.y) {
+            r.lastPointer = screen; r.ResetDismissal();
+        }
+        if (r.dragging) r.DragTo(point.x, r.pressed.monitor);
+        else r.Hover(r.Layout().Hit(point));
+        if (!r.tracking) {
+            TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, window, 0}; r.tracking = TrackMouseEvent(&track) != FALSE;
+        }
         return 0;
     }
-
-    return DefWindowProc(hWnd, message, wParam, lParam);
+    case WM_MOUSELEAVE: r.wheelId.clear(); r.wheelRemainder = 0; r.tracking = false; r.Hover({}); return 0;
+    case WM_LBUTTONDOWN: {
+        r.wheelId.clear(); r.wheelRemainder = 0;
+        r.ResetDismissal();
+        r.Tooltip(false);
+        const auto point = r.Mouse(lParam); const auto inputLayout = r.Layout(); const auto hit = inputLayout.Hit(point);
+        if (hit.control == island::Control::None || (hit.control == island::Control::Slider && !r.Adjustable(hit.monitor))) return 0;
+        r.keyboardMode = false; r.focus = hit; r.pressed = hit; r.feedback.Target(0.97);
+        if (hit.control == island::Control::Slider && hit.monitor < r.state.monitors.size()) {
+            const auto id = r.state.monitors[hit.monitor].id;
+            r.SelectSliderTarget(hit.monitor);
+            const auto current = std::ranges::find_if(r.state.monitors, [&id](const auto& monitor) { return monitor.id == id; });
+            if (current == r.state.monitors.end()) { r.pressed = {}; return 0; }
+            r.pressed.monitor = static_cast<size_t>(current - r.state.monitors.begin());
+            r.dragging = true; r.dragId = id;
+            SetCapture(window); r.DragTo(point.x, r.pressed.monitor);
+        } else SetCapture(window);
+        if (GetCapture() == window) r.StopDismissal();
+        r.AccessibleName(); r.RequestFrame(); return 0;
+    }
+    case WM_LBUTTONUP: {
+        const auto pressed = r.pressed; const bool dragging = r.dragging;
+        const auto hit = r.Layout().Hit(r.Mouse(lParam));
+        r.FinishDrag(); if (!dragging && pressed == hit) r.Activate(pressed);
+        return 0;
+    }
+    case WM_CAPTURECHANGED:
+        if (reinterpret_cast<HWND>(lParam) != window) r.FinishDrag();
+        return 0;
+    case WM_CANCELMODE: r.FinishDrag(); return 0;
+    case WM_MOUSEWHEEL: {
+        r.ResetDismissal();
+        if (r.dragging) return 0;
+        // Wheel coordinates are screen pixels, unlike WM_MOUSEMOVE. Invert
+        // the current presentation after converting them to client pixels.
+        POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        if (!ScreenToClient(window, &point)) return 0;
+        const auto hit = r.Layout().Hit(r.ClientPoint(static_cast<float>(point.x), static_cast<float>(point.y)));
+        r.keyboardMode = false;
+        const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+        if (hit.control == island::Control::Slider) {
+            if (!r.Adjustable(hit.monitor)) { r.wheelId.clear(); r.wheelRemainder = 0; return 0; }
+            const auto& monitor = r.state.monitors[hit.monitor];
+            if (r.wheelId != monitor.id) { r.wheelId = monitor.id; r.wheelRemainder = 0; }
+            // Accumulate high-resolution wheel deltas per stable display ID,
+            // so a partial step cannot spill into a different display.
+            r.wheelRemainder += delta;
+            const int steps = r.wheelRemainder / WHEEL_DELTA;
+            r.wheelRemainder %= WHEEL_DELTA;
+            const int increment = (GET_KEYSTATE_WPARAM(wParam) & MK_SHIFT) != 0 ? 5 : 1;
+            r.SelectSliderTarget(hit.monitor);
+            r.DisplayBrightness(hit.monitor, monitor.brightness + steps * increment, false);
+            r.Hover(hit); r.AccessibleName(); r.RequestFrame(); return 0;
+        }
+        r.wheelId.clear(); r.wheelRemainder = 0;
+        if (r.Layout().viewport.Contains(r.ClientPoint(static_cast<float>(point.x), static_cast<float>(point.y)))) {
+            r.scroll = std::clamp(r.scroll - static_cast<float>(delta) / WHEEL_DELTA * island::kRowStride,
+                                  0.0f, r.Layout().MaximumScroll());
+            r.Hover({}); r.RequestFrame();
+        }
+        return 0;
+    }
+    case WM_KEYDOWN:
+        r.wheelId.clear(); r.wheelRemainder = 0;
+        r.ResetDismissal();
+        r.keyboardMode = true;
+        if (wParam == VK_ESCAPE) { Hide(true); return 0; }
+        if (wParam == VK_TAB) { r.MoveFocus((GetKeyState(VK_SHIFT) & 0x8000) != 0); return 0; }
+        if (wParam == VK_SPACE || wParam == VK_RETURN) { r.Activate(r.focus); return 0; }
+        if (r.focus.control == island::Control::Slider) {
+            if (!r.Adjustable(r.focus.monitor)) return 0;
+            int value = r.state.monitors[r.focus.monitor].brightness;
+            const int step = (GetKeyState(VK_SHIFT) & 0x8000) != 0 ? 5 : 1;
+            if (wParam == VK_RIGHT || wParam == VK_UP) value += step;
+            else if (wParam == VK_LEFT || wParam == VK_DOWN) value -= step;
+            else if (wParam == VK_PRIOR) value += 10;
+            else if (wParam == VK_NEXT) value -= 10;
+            else if (wParam == VK_HOME) value = kMinBrightness;
+            else if (wParam == VK_END) value = kMaxBrightness;
+            else return 0;
+            r.SelectSliderTarget(r.focus.monitor); r.DisplayBrightness(r.focus.monitor, value, false);
+        } else if (r.focus.control == island::Control::Software || r.focus.control == island::Control::Hardware) {
+            if (wParam == VK_LEFT) r.Activate({island::Control::Software});
+            else if (wParam == VK_RIGHT) r.Activate({island::Control::Hardware});
+        } else if (wParam == VK_UP || wParam == VK_DOWN) r.MoveFocus(wParam == VK_UP);
+        return 0;
+    case WM_HOTKEY:
+        if (IsVisible() && !r.hiding) {
+            const auto found = std::ranges::find_if(kShortcuts, [wParam](const auto& shortcut) {
+                return static_cast<WPARAM>(shortcut.id) == wParam;
+            });
+            if (found != kShortcuts.end()) {
+                if (found->command == VK_TAB) {
+                    r.ResetDismissal();
+                    r.keyboardMode = true; r.MoveFocus((found->modifiers & MOD_SHIFT) != 0); return 0;
+                }
+                return HandleMessage(window, WM_KEYDOWN, found->command, 0);
+            }
+        }
+        return 0;
+    case WM_ACTIVATE:
+        if (LOWORD(wParam) == WA_INACTIVE && r.keyboardMode && IsVisible() && !r.contextMenu) Hide(true);
+        return 0;
+    case WM_CONTEXTMENU:
+        if (r.actions.showContextMenu) {
+            POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (point.x == -1 && point.y == -1) GetCursorPos(&point);
+            r.contextMenu = true; r.StopDismissal();
+            r.actions.showContextMenu(point);
+            r.contextMenu = false; r.ResetDismissal();
+        }
+        return 0;
+    case WM_NCDESTROY:
+        r.StopDismissal(); r.StopMouseInput();
+        r.UnregisterShortcuts();
+        r.clock.Stop(); r.renderer.reset(); r.window = nullptr; r.tooltip = nullptr;
+        SetWindowLongPtrW(window, GWLP_USERDATA, 0); break;
+    }
+    return DefWindowProcW(window, message, wParam, lParam);
 }

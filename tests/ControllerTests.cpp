@@ -1,0 +1,186 @@
+#include "brightness/BrightnessController.h"
+#include "brightness/MonitorCatalog.h"
+#include "FakeMonitorApi.h"
+#include <cstdio>
+#include <stdexcept>
+
+namespace {
+std::atomic<unsigned> enumerations{0};
+std::atomic<bool> failEnumeration{false};
+std::atomic<size_t> displayCount{1};
+void Check(bool condition, const char* message) {
+    if (!condition) throw std::runtime_error(message);
+}
+template<class Predicate>
+void WaitUntil(Predicate predicate, const char* message, int timeoutMs = 3000) {
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (!predicate() && std::chrono::steady_clock::now() < until) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    Check(predicate(), message);
+}
+struct Window {
+    HWND handle = CreateWindowW(L"STATIC", L"", WS_POPUP, 0, 0, 1, 1,
+                                nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    ~Window() { if (handle) DestroyWindow(handle); }
+};
+}
+
+std::expected<std::vector<MonitorInfo>, DWORD> MonitorCatalog::Enumerate() {
+    ++enumerations;
+    if (failEnumeration) return std::unexpected(ERROR_GEN_FAILURE);
+    std::vector<MonitorInfo> monitors(displayCount.load());
+    for (size_t i = 0; i < monitors.size(); ++i) {
+        monitors[i].id = i == 0 ? L"display" : L"second";
+        monitors[i].handle = reinterpret_cast<HMONITOR>(i + 1);
+    }
+    return monitors;
+}
+
+int main() try {
+    Window window;
+    Check(window.handle != nullptr, "create notification window");
+    BrightnessController controller;
+    fake::queryDelayMs = 200;
+    const auto start = std::chrono::steady_clock::now();
+    Check(controller.Init(window.handle), "start controller");
+    Check(std::chrono::steady_clock::now() - start < std::chrono::milliseconds(150),
+          "initialization does not wait for VCP probes");
+    WaitUntil([&] { return !controller.GetMonitors().empty(); }, "publish asynchronous catalog");
+    Check(fake::probeThread != GetCurrentThreadId(), "probe DDC on background thread");
+    fake::queryDelayMs = 0;
+
+    fake::probeFailureMask = 3;
+    controller.RequestMonitorRefresh();
+    WaitUntil([&] { return controller.GetMonitors()[0].hardwareStatus == HardwareStatus::Failed; },
+              "publish transient failure");
+    fake::probeFailureMask = 0;
+    WaitUntil([&] { return controller.GetMonitors()[0].hardwareStatus == HardwareStatus::Available; },
+              "recover transient failure without another UI event");
+
+    failEnumeration = true;
+    controller.RequestMonitorRefresh();
+    WaitUntil([&] { return controller.GetCatalogError() != ERROR_SUCCESS; }, "report catalog failure");
+    Check(controller.GetMonitors().size() == 1, "preserve last complete catalog on enumeration failure");
+    failEnumeration = false;
+    WaitUntil([&] { return controller.GetCatalogError() == ERROR_SUCCESS; }, "retry catalog failure");
+
+    fake::probeError = ERROR_NOT_SUPPORTED;
+    fake::probeFailureMask = 3;
+    controller.RequestMonitorRefresh();
+    WaitUntil([&] { return controller.GetMonitors()[0].hardwareStatus == HardwareStatus::Unsupported; },
+              "report explicitly unsupported endpoint");
+    const unsigned before = enumerations;
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    Check(enumerations == before, "do not retry unsupported endpoints");
+
+    fake::probeError = ERROR_GEN_FAILURE;
+    controller.RequestMonitorRefresh();
+    WaitUntil([&] { return enumerations >= before + 4; }, "run three bounded retries", 6000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    Check(enumerations == before + 4, "stop retrying after three retries");
+    controller.Cleanup();
+
+    fake::probeFailureMask = 0;
+    fake::writeFailureMask = 2;
+    fake::writeDelayMs = 0;
+    {
+        std::lock_guard lock(fake::writesMutex);
+        fake::writes.clear();
+    }
+    controller.SetBrightnessMode(BrightnessMode::Hardware);
+    Check(controller.Init(window.handle), "restart for partial restore test");
+    WaitUntil([&] {
+        const auto monitors = controller.GetMonitors();
+        return !monitors.empty() && monitors[0].hardwareStatus == HardwareStatus::Failed && monitors[0].hardwareActive;
+    }, "observe partially successful hardware write");
+    controller.SetBrightnessMode(BrightnessMode::Software);
+    WaitUntil([&] { return !controller.GetMonitors()[0].hardwareActive; },
+              "restore only physical endpoints that were actually modified");
+    {
+        std::lock_guard lock(fake::writesMutex);
+        Check(fake::writes.size() == 4 && fake::writes[2].value == 100,
+              "finish partial hardware restore before releasing ownership");
+    }
+    controller.Cleanup();
+
+    fake::probeFailureMask = 0;
+    fake::writeFailureMask = 0;
+    fake::writeDelayMs = 100;
+    controller.SetBrightnessMode(BrightnessMode::Hardware);
+    {
+        std::lock_guard lock(fake::writesMutex);
+        fake::writes.clear();
+    }
+    Check(controller.Init(window.handle), "restart controller for mode transition test");
+    WaitUntil([] {
+        std::lock_guard lock(fake::writesMutex);
+        return !fake::writes.empty();
+    }, "start in-flight hardware write");
+    Check(controller.GetMonitors()[0].hardwareActive, "mark hardware ownership before write completes");
+    controller.SetBrightnessMode(BrightnessMode::Software);
+    Check(controller.GetMonitors()[0].hardwareActive, "keep overlays deferred during in-flight hardware work");
+    WaitUntil([&] { return !controller.GetMonitors()[0].hardwareActive; }, "release ownership after hardware restore");
+    {
+        std::lock_guard lock(fake::writesMutex);
+        Check(fake::writes.size() == 4 && fake::writes[2].value == 100 && fake::writes[3].value == 100,
+              "restore both physical monitors before enabling software overlay");
+    }
+    controller.Cleanup();
+
+    fake::probeFailureMask = 0;
+    fake::writeFailureMask = 0;
+    fake::writeDelayMs = 200;
+    controller.SetBrightnessMode(BrightnessMode::Hardware);
+    {
+        std::lock_guard lock(fake::writesMutex);
+        fake::writes.clear();
+    }
+    Check(controller.Init(window.handle), "restart controller for shutdown test");
+    WaitUntil([] {
+        std::lock_guard lock(fake::writesMutex);
+        return !fake::writes.empty();
+    }, "start first slow write");
+    controller.Cleanup();
+    {
+        std::lock_guard lock(fake::writesMutex);
+        Check(fake::writes.size() == 1, "stop before second physical monitor write");
+    }
+    displayCount = 2; fake::writeDelayMs = 0;
+    controller.SetBrightnessMode(BrightnessMode::Software);
+    controller.SetMonitorBrightnessValues({{L"display", 20}, {L"second", 80}});
+    Check(controller.Init(window.handle), "restart for independent display targets");
+    WaitUntil([&] { return controller.GetMonitors().size() == 2; }, "enumerate two independent displays");
+    Check(controller.GetMonitors()[0].brightness == 20 && controller.GetMonitors()[1].brightness == 80,
+          "load individual brightness values into the catalog");
+    {
+        std::lock_guard lock(fake::writesMutex); fake::writes.clear();
+    }
+    controller.SetBrightnessMode(BrightnessMode::Hardware);
+    WaitUntil([] { std::lock_guard lock(fake::writesMutex); return fake::writes.size() >= 4; }, "write independent hardware targets");
+    {
+        std::lock_guard lock(fake::writesMutex);
+        Check(fake::writes[0].value == 20 && fake::writes[2].value == 80, "hardware brightness is independent per display");
+    }
+    Check(controller.SetMonitorBrightness(L"display", 35), "update one monitor target");
+    WaitUntil([] { std::lock_guard lock(fake::writesMutex); return fake::writes.size() >= 6; }, "apply one monitor adjustment");
+    {
+        std::lock_guard lock(fake::writesMutex);
+        Check(fake::writes.size() == 6 && fake::writes[4].value == 35,
+              "unchanged second monitor receives no extra hardware writes");
+    }
+    fake::probeFailureMask = 12; fake::probeError = ERROR_NOT_SUPPORTED;
+    controller.RequestMonitorRefresh();
+    WaitUntil([&] { return controller.GetMonitors()[1].hardwareStatus == HardwareStatus::Unsupported; }, "second display becomes unavailable");
+    Check(!controller.SetMonitorBrightness(L"second", 5) && controller.GetMonitors()[1].brightness == 80,
+          "unavailable hardware target is unchanged");
+    Check(!controller.SetMonitorBrightness(L"missing", 5), "disconnected display has no target mutation");
+    controller.SetBrightnessMode(BrightnessMode::Software);
+    Check(controller.SetMonitorBrightness(L"second", 42) && controller.GetMonitors()[0].brightness == 35,
+          "software targets stay independent even without DDC support");
+    controller.Cleanup();
+    std::puts("ControllerTests passed");
+} catch (const std::exception& error) {
+    std::fprintf(stderr, "FAIL: %s\n", error.what());
+    return 1;
+}

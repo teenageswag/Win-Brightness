@@ -1,94 +1,157 @@
 #include "HardwareBrightness.h"
 #include <lowlevelmonitorconfigurationapi.h>
 #include <unordered_set>
+#include <utility>
+#include <cwchar>
 
 #pragma comment(lib, "dxva2.lib")
 
 namespace {
     constexpr BYTE kBrightnessVcpCode = 0x10;
+
+    DWORD MonitorFailureCode() {
+        const DWORD error = GetLastError();
+        return error != ERROR_SUCCESS ? error : ERROR_GEN_FAILURE;
+    }
+
+    struct PhysicalBatch {
+        std::vector<PHYSICAL_MONITOR> monitors;
+        explicit PhysicalBatch(DWORD count) : monitors(count) {}
+        ~PhysicalBatch() {
+            for (const auto& monitor : monitors) {
+                if (monitor.hPhysicalMonitor) DestroyPhysicalMonitor(monitor.hPhysicalMonitor);
+            }
+        }
+        PhysicalBatch(const PhysicalBatch&) = delete;
+        PhysicalBatch& operator=(const PhysicalBatch&) = delete;
+    };
+}
+
+void HardwareBrightness::PhysicalMonitorDeleter::operator()(void* handle) const noexcept {
+    if (!DestroyPhysicalMonitor(handle)) {
+        const DWORD error = MonitorFailureCode();
+        wchar_t message[96]{};
+        swprintf_s(message, L"trenches: DestroyPhysicalMonitor failed (%lu)\n", error);
+        OutputDebugStringW(message);
+    }
 }
 
 HardwareBrightness::~HardwareBrightness() {
     ReleaseMonitors();
 }
 
-void HardwareBrightness::RefreshMonitors(std::vector<MonitorInfo>& monitors) {
+void HardwareBrightness::RefreshMonitors(std::vector<MonitorInfo>& monitors, const std::atomic_bool* cancelled) {
     std::vector<CachedDisplay> displays;
 
     for (MonitorInfo& monitor : monitors) {
+        if (cancelled && cancelled->load(std::memory_order_relaxed)) break;
+        monitor.hardwareBrightness = false;
+        monitor.hardwareError = ERROR_SUCCESS;
+        monitor.hardwareStatus = HardwareStatus::Unknown;
         DWORD physicalCount = 0;
-        if (!GetNumberOfPhysicalMonitorsFromHMONITOR(monitor.handle, &physicalCount) || physicalCount == 0) {
+        if (!GetNumberOfPhysicalMonitorsFromHMONITOR(monitor.handle, &physicalCount)) {
+            monitor.hardwareError = MonitorFailureCode();
+            monitor.hardwareStatus = IsUnsupportedHardwareError(monitor.hardwareError)
+                ? HardwareStatus::Unsupported : HardwareStatus::Failed;
+            continue;
+        }
+        if (physicalCount == 0) {
+            monitor.hardwareError = ERROR_NOT_SUPPORTED;
+            monitor.hardwareStatus = HardwareStatus::Unsupported;
             continue;
         }
 
-        std::vector<PHYSICAL_MONITOR> physicalMonitors(physicalCount);
-        if (!GetPhysicalMonitorsFromHMONITOR(monitor.handle, physicalCount, physicalMonitors.data())) {
+        PhysicalBatch batch(physicalCount);
+        if (!GetPhysicalMonitorsFromHMONITOR(monitor.handle, physicalCount, batch.monitors.data())) {
+            monitor.hardwareError = MonitorFailureCode();
+            monitor.hardwareStatus = IsUnsupportedHardwareError(monitor.hardwareError)
+                ? HardwareStatus::Unsupported : HardwareStatus::Failed;
             continue;
         }
 
         CachedDisplay display;
         display.id = monitor.id;
-        for (PHYSICAL_MONITOR& physical : physicalMonitors) {
+        for (PHYSICAL_MONITOR& physical : batch.monitors) {
+            UniquePhysicalMonitor owned(std::exchange(physical.hPhysicalMonitor, nullptr));
+            if (cancelled && cancelled->load(std::memory_order_relaxed)) {
+                continue;
+            }
             DWORD current = 0;
             DWORD maximum = 0;
-            if (GetVCPFeatureAndVCPFeatureReply(
-                    physical.hPhysicalMonitor, kBrightnessVcpCode, nullptr, &current, &maximum) &&
-                maximum > 0) {
-                display.monitors.push_back({physical, maximum});
+            MC_VCP_CODE_TYPE type = MC_SET_PARAMETER;
+            const BOOL queried = GetVCPFeatureAndVCPFeatureReply(
+                owned.get(), kBrightnessVcpCode, &type, &current, &maximum);
+            const DWORD error = queried ? ERROR_SUCCESS : MonitorFailureCode();
+            if (queried && type == MC_SET_PARAMETER && maximum > 0 && current <= maximum) {
+                display.monitors.push_back({std::move(owned), maximum});
+                monitor.hardwareBrightness = true;
             } else {
-                DestroyPhysicalMonitor(physical.hPhysicalMonitor);
+                const DWORD failure = queried ? ERROR_INVALID_DATA : error;
+                if (monitor.hardwareError == ERROR_SUCCESS ||
+                    (IsUnsupportedHardwareError(monitor.hardwareError) && !IsUnsupportedHardwareError(failure))) {
+                    monitor.hardwareError = failure;
+                }
+                // Keep the rejected physical endpoint's result and index.
+                display.monitors.push_back({{}, 0, failure});
             }
         }
 
         if (!display.monitors.empty()) {
-            monitor.hardwareBrightness = true;
             displays.push_back(std::move(display));
         }
+        monitor.hardwareStatus = monitor.hardwareError == ERROR_SUCCESS
+            ? HardwareStatus::Available
+            : (!monitor.hardwareBrightness && IsUnsupportedHardwareError(monitor.hardwareError)
+                ? HardwareStatus::Unsupported : HardwareStatus::Failed);
     }
 
-    std::lock_guard lock(m_mutex);
-    ReleaseMonitorsLocked();
     m_displays = std::move(displays);
 }
 
-bool HardwareBrightness::ApplyBrightness(int percent, const std::vector<std::wstring>& monitorIds) {
+std::vector<HardwareWriteResult> HardwareBrightness::ApplyBrightness(
+    int percent, const std::vector<std::wstring>& monitorIds, const std::atomic_bool* cancelled) {
     const int clamped = ClampBrightness(percent);
     const std::unordered_set<std::wstring> targets(monitorIds.begin(), monitorIds.end());
-    bool applied = false;
+    std::vector<HardwareWriteResult> results;
+    std::unordered_set<std::wstring> found;
 
-    std::lock_guard lock(m_mutex);
-    for (const CachedDisplay& display : m_displays) {
+    for (CachedDisplay& display : m_displays) {
+        if (cancelled && cancelled->load(std::memory_order_relaxed)) break;
         if (!targets.contains(display.id)) {
             continue;
         }
 
-        for (const CachedPhysicalMonitor& monitor : display.monitors) {
+        found.insert(display.id);
+        for (size_t i = 0; i < display.monitors.size(); ++i) {
+            if (cancelled && cancelled->load(std::memory_order_relaxed)) break;
+            CachedPhysicalMonitor& monitor = display.monitors[i];
+            if (!monitor.handle) {
+                results.push_back({display.id, i, 0, monitor.discoveryError});
+                continue;
+            }
             const double position = clamped / 100.0;
             const DWORD target = static_cast<DWORD>(monitor.maxBrightness * position + 0.5);
-            applied = SetVCPFeature(monitor.monitor.hPhysicalMonitor, kBrightnessVcpCode, target) != FALSE || applied;
+            DWORD error = ERROR_SUCCESS;
+            if (monitor.lastWritten != target) {
+                if (SetVCPFeature(monitor.handle.get(), kBrightnessVcpCode, target)) {
+                    monitor.lastWritten = target;
+                } else {
+                    error = MonitorFailureCode();
+                }
+            }
+            results.push_back({display.id, i, target, error});
         }
     }
 
-    return applied;
-}
-
-void HardwareBrightness::ReleaseMonitors() {
-    std::lock_guard lock(m_mutex);
-    ReleaseMonitorsLocked();
-}
-
-void HardwareBrightness::ReleaseMonitorsLocked() {
-    for (const CachedDisplay& display : m_displays) {
-        if (display.monitors.empty()) {
-            continue;
+    for (const auto& id : targets) {
+        if (cancelled && cancelled->load(std::memory_order_relaxed)) break;
+        if (!found.contains(id)) {
+            results.push_back({id, 0, 0, ERROR_NOT_SUPPORTED});
         }
-
-        std::vector<PHYSICAL_MONITOR> handles;
-        handles.reserve(display.monitors.size());
-        for (const CachedPhysicalMonitor& monitor : display.monitors) {
-            handles.push_back(monitor.monitor);
-        }
-        DestroyPhysicalMonitors(static_cast<DWORD>(handles.size()), handles.data());
     }
+    return results;
+}
+
+void HardwareBrightness::ReleaseMonitors() noexcept {
     m_displays.clear();
 }
