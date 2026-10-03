@@ -21,7 +21,6 @@ int wmain(int argc, wchar_t** argv) try {
     CheckHr(renderer.Initialize(window, module, 96, island::PanelHeight(5, 1000)), "initialize renderer");
     Check(renderer.UsesInter(), "renderer uses embedded font");
     PopupState state;
-    state.brightness = 72;
     for (size_t i = 0; i < 8; ++i) {
         MonitorInfo monitor;
         monitor.id = std::to_wstring(i);

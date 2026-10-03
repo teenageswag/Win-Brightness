@@ -30,13 +30,10 @@ private:
     void ApplySoftwareBrightness();
     void SaveSettings();
     void ReportPersistenceResult(const SettingsResult& result, bool autostart);
-    void SetBrightness(int percent);
     void SetMonitorBrightness(const std::wstring& id, int percent);
     void SetBrightnessMode(BrightnessMode mode);
     void SetEnabled(bool enabled);
-    void SetMonitorSelection(MonitorSelection selection);
     void SetAutostartEnabled(bool enabled);
-    void NormalizeMonitorSelection();
     POINT GetTrayIconPosition() const;
     POINT GetActiveMonitorPoint() const;
 

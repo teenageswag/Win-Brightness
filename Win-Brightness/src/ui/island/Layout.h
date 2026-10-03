@@ -68,10 +68,8 @@ struct Layout {
     }
     Target Hit(Point point) const {
         if (power.Contains(point)) return {Control::Power};
-        {
-            if (software.Contains(point)) return {Control::Software};
-            if (hardware.Contains(point)) return {Control::Hardware};
-        }
+        if (software.Contains(point)) return {Control::Software};
+        if (hardware.Contains(point)) return {Control::Hardware};
         if (viewport.Contains(point)) {
             for (const auto& row : rows) {
                 Rect hit = row.slider;

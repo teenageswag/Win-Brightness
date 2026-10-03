@@ -211,12 +211,7 @@ void App::UpdateTrayIcon() {
         return;
     }
 
-    size_t targetCount = 0;
-    for (const MonitorInfo& monitor : m_controller.GetMonitors()) {
-        if (m_state.monitors.Contains(monitor.id)) {
-            ++targetCount;
-        }
-    }
+    const size_t targetCount = m_controller.GetMonitors().size();
 
     NOTIFYICONDATA icon{sizeof(icon)};
     icon.hWnd = m_hMsgWnd;
@@ -291,10 +286,8 @@ void App::SyncPopup() {
     }
 
     PopupState popupState;
-    popupState.brightness = m_state.brightness;
     popupState.enabled = m_state.enabled;
     popupState.mode = m_state.mode;
-    popupState.selection = m_state.monitors;
     popupState.monitors = m_controller.GetMonitors();
     popupState.catalogError = m_controller.GetCatalogError();
     popupState.settingsError = m_settingsError;
@@ -351,15 +344,6 @@ void App::ReportPersistenceResult(const SettingsResult& result, bool autostart) 
     }
 }
 
-void App::SetBrightness(int percent) {
-    m_state.brightness = ClampBrightness(percent);
-    m_controller.SetBrightness(m_state.brightness);
-    ApplySoftwareBrightness();
-    SaveSettings();
-    UpdateTrayIcon();
-    SyncPopup();
-}
-
 void App::SetMonitorBrightness(const std::wstring& id, int percent) {
     if (!m_controller.SetMonitorBrightness(id, percent)) { SyncPopup(); return; }
     m_state.monitorBrightness[id] = ClampBrightness(percent);
@@ -385,39 +369,10 @@ void App::SetEnabled(bool enabled) {
     SyncPopup();
 }
 
-void App::SetMonitorSelection(MonitorSelection selection) {
-    if (!selection.all && selection.ids.empty()) {
-        const std::vector<MonitorInfo> monitors = m_controller.GetMonitors();
-        if (!monitors.empty()) {
-            selection.ids.push_back(monitors.front().id);
-        }
-    }
-
-    m_state.monitors = std::move(selection);
-    m_controller.SetMonitorSelection(m_state.monitors);
-    ApplySoftwareBrightness();
-    SaveSettings();
-    UpdateTrayIcon();
-    SyncPopup();
-}
-
 void App::SetAutostartEnabled(bool enabled) {
     ReportPersistenceResult(m_settings.SetAutostartEnabled(enabled), true);
     m_autostartEnabled = m_settings.IsAutostartEnabled();
     SyncPopup();
-}
-
-void App::NormalizeMonitorSelection() {
-    if (m_state.monitors.all || !m_state.monitors.ids.empty()) {
-        return;
-    }
-
-    const std::vector<MonitorInfo> monitors = m_controller.GetMonitors();
-    if (!monitors.empty()) {
-        m_state.monitors.ids.push_back(monitors.front().id);
-        m_controller.SetMonitorSelection(m_state.monitors);
-        SaveSettings();
-    }
 }
 
 POINT App::GetTrayIconPosition() const {
@@ -495,7 +450,6 @@ LRESULT App::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
         return TRUE;
 
     case BrightnessController::kMonitorsChangedMessage:
-        NormalizeMonitorSelection();
         ApplySoftwareBrightness();
         UpdateTrayIcon();
         SyncPopup();

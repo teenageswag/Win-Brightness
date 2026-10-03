@@ -59,7 +59,6 @@ int main() try {
     Check(popup.Register() && popup.Create(), "create popup");
     popup.SetPreferences({island::Theme::Dark, false, false});
     PopupState saved;
-    saved.brightness = 72;
     for (size_t i = 0; i < 7; ++i) {
         MonitorInfo monitor;
         monitor.id = std::to_wstring(i); monitor.name = L"Monitor " + std::to_wstring(i + 1); monitor.primary = i == 0;

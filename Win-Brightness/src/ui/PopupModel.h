@@ -4,10 +4,8 @@
 #include <functional>
 
 struct PopupState {
-    int brightness = kDefaultBrightness;
     bool enabled = true;
     BrightnessMode mode = BrightnessMode::Software;
-    MonitorSelection selection;
     std::vector<MonitorInfo> monitors;
     bool autostart = false;
     bool hotkeyAvailable = true;
