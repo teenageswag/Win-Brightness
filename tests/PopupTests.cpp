@@ -166,7 +166,19 @@ int main() try {
         MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_RIGHT) != FALSE;
     if (shortcutWasFree) UnregisterHotKey(popup.GetHWnd(), 500);
     const HWND keyboardForeground = GetForegroundWindow();
-    popup.Toggle({0, 0}, true); Settle(popup);
+    popup.Toggle({0, 0}, true);
+    Check(popup.GetPresentation().offsetY < -popup.GetLayout().shell.Height(), "opening starts above the display edge");
+    HANDLE opening = popup.FrameWaitHandle();
+    Check(opening && WaitForSingleObject(opening, 2000) == WAIT_OBJECT_0, "opening frame is paced");
+    popup.RenderFrame();
+    const float startY = popup.GetPresentation().offsetY;
+    popup.Hide(true);
+    Check(popup.GetPresentation().offsetY == startY, "closing starts at the current presentation");
+    popup.Toggle({0, 0}, true);
+    Check(popup.GetPresentation().offsetY == startY, "reopening preserves the interrupted presentation");
+    Settle(popup);
+    Check(popup.GetPresentation().offsetY == 0 && popup.GetPresentation().scale == 1,
+          "spring appearance settles flush against the screen edge");
     Check(GetForegroundWindow() == keyboardForeground, "hotkey opening also preserves foreground focus");
     popup.HandleMessage(popup.GetHWnd(), WM_HOTKEY, 22, MAKELPARAM(MOD_CONTROL | MOD_ALT, VK_RIGHT));
     popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);

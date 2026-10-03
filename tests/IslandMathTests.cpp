@@ -44,6 +44,10 @@ int main() try {
           attached.back().x == 0 && attached.back().y == 0, "top corners meet the screen edge exactly");
     Check(island::InsideSquircle({0, 0}, {0, 0, 420, 218}, 30, true), "top corner remains opaque and interactive");
     Check(!island::InsideSquircle({0, 217.9f}, {0, 0, 420, 218}, 30, true), "bottom corner retains continuous rounding");
+    const auto hidden = island::PresentPanel(218, 0);
+    const auto visible = island::PresentPanel(218, 1);
+    Check(hidden.offsetY <= -218 && hidden.scale == 0.97f && hidden.opacity == 0, "panel originates above the display edge");
+    Check(visible.offsetY == 0 && visible.scale == 1 && visible.opacity == 1, "panel settles flush without scale drift");
     std::puts("IslandMathTests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());

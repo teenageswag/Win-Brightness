@@ -20,6 +20,7 @@ public:
     void SetPreferences(island::Preferences preferences);
     island::Preferences GetPreferences() const;
     island::Layout GetLayout() const;
+    island::Presentation GetPresentation() const;
     HRESULT LastRenderError() const;
     HANDLE FrameWaitHandle() const;
     void RenderFrame();

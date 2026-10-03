@@ -170,10 +170,18 @@ struct PopupView::Impl {
             ++graphicsRetries; SetTimer(window, kGraphicsTimer, 1000, nullptr);
         }
     }
-    island::Point Mouse(LPARAM param) const {
+    island::Presentation Presentation() const {
+        return island::PresentPanel(static_cast<float>(height.Value()), visibility.Value());
+    }
+    island::Point ClientPoint(float pixelX, float pixelY) const {
         RECT client{}; GetClientRect(window, &client);
-        const float inset = (static_cast<float>(client.right) / Scale() - static_cast<float>(width.Value())) * 0.5f;
-        return {GET_X_LPARAM(param) / Scale() - inset, GET_Y_LPARAM(param) / Scale()};
+        const auto presentation = Presentation();
+        const float center = static_cast<float>(client.right) / Scale() * 0.5f;
+        return {(pixelX / Scale() - center) / presentation.scale + static_cast<float>(width.Value()) * 0.5f,
+                (pixelY / Scale() - presentation.offsetY) / presentation.scale};
+    }
+    island::Point Mouse(LPARAM param) const {
+        return ClientPoint(static_cast<float>(GET_X_LPARAM(param)), static_cast<float>(GET_Y_LPARAM(param)));
     }
     double BrightnessAt(float x, size_t index) const {
         const auto layout = Layout();
@@ -351,6 +359,7 @@ PopupView::~PopupView() = default;
 HWND PopupView::GetHWnd() const { return m_impl->window; }
 bool PopupView::IsVisible() const { return m_impl->window && IsWindowVisible(m_impl->window); }
 island::Layout PopupView::GetLayout() const { return m_impl->Layout(); }
+island::Presentation PopupView::GetPresentation() const { return m_impl->Presentation(); }
 HRESULT PopupView::LastRenderError() const { return m_impl->renderError; }
 island::Preferences PopupView::GetPreferences() const { return m_impl->preferences; }
 
@@ -409,7 +418,11 @@ void PopupView::Toggle(POINT monitorPoint, bool keyboardInvoked) {
         const HRESULT result = r.renderer->Resize(r.dpi, r.maximumHeight);
         if (FAILED(result)) { r.GraphicsFailure(result); return; }
     }
-    if (!IsVisible()) r.visibility.Snap(r.Animate() ? 0.0 : 1.0);
+    if (!IsVisible()) {
+        r.visibility.Snap(r.Animate() ? 0.0 : 1.0);
+        const HRESULT result = r.renderer->Conceal();
+        if (FAILED(result)) { r.GraphicsFailure(result); return; }
+    }
     r.hiding = false; r.visibility.Target(1.0); r.lastFrame = {};
     r.keyboardMode = keyboardInvoked; r.focus = {island::Control::Slider, r.Primary()};
     ShowWindow(r.window, SW_SHOWNOACTIVATE);
@@ -430,6 +443,10 @@ void PopupView::Hide(bool animated) {
         r.width.Snap(std::min(island::kWidth, r.maximumWidth));
         r.height.Snap(island::PanelHeight(r.state.monitors.size(), r.maximumHeight, r.maximumWidth));
         r.keyboardMode = false;
+        if (r.renderer) {
+            const HRESULT result = r.renderer->Conceal();
+            if (FAILED(result)) r.GraphicsFailure(result);
+        }
         ShowWindow(r.window, SW_HIDE); r.dirty = false; r.lastFrame = {};
         KillTimer(r.window, kGraphicsTimer);
     }
@@ -505,7 +522,7 @@ void PopupView::RenderFrame() {
     r.Position();
     island::Frame frame;
     frame.state = &r.state; frame.layout = r.Layout();
-    frame.opacity = static_cast<float>(std::clamp(r.visibility.Value(), 0.0, 1.0));
+    frame.presentation = r.Presentation();
     frame.radius = std::min(32.0f, static_cast<float>(r.height.Value()) * 0.14f);
     frame.modePosition = static_cast<float>(r.mode.Value());
     for (const auto& monitor : r.state.monitors) {

@@ -15,6 +15,7 @@ struct Frame {
     const PopupState* state = nullptr;
     Layout layout;
     float opacity = 1.0f;
+    Presentation presentation;
     float radius = 32.0f;
     std::vector<float> rowValues;
     float modePosition = 0.0f;
@@ -38,6 +39,7 @@ public:
     HANDLE FrameHandle() const;
     bool UsesInter() const;
     void RefreshTheme();
+    HRESULT Conceal();
 
 private:
     struct Impl;

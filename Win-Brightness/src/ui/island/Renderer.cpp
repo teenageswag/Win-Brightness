@@ -89,6 +89,7 @@ struct Renderer::Impl {
     ComPtr<IDCompositionTarget> compositionTarget;
     ComPtr<IDCompositionVisual> visual;
     ComPtr<IDCompositionEffectGroup> visualEffect;
+    ComPtr<IDCompositionScaleTransform> presentationScale;
     ComPtr<IDWriteFactory> write;
     Fonts fonts;
     ComPtr<ID2D1SolidColorBrush> brush;
@@ -341,6 +342,8 @@ HRESULT Renderer::Initialize(HWND window, HINSTANCE module, UINT dpi, float maxi
     if (FAILED(hr = r.composition->CreateTargetForHwnd(window, TRUE, &r.compositionTarget))) return hr;
     if (FAILED(hr = r.composition->CreateVisual(&r.visual))) return hr;
     if (FAILED(hr = r.composition->CreateEffectGroup(&r.visualEffect))) return hr;
+    if (FAILED(hr = r.composition->CreateScaleTransform(&r.presentationScale))) return hr;
+    if (FAILED(hr = r.visual->SetTransform(r.presentationScale.Get()))) return hr;
     if (FAILED(hr = r.visual->SetEffect(r.visualEffect.Get()))) return hr;
     if (FAILED(hr = r.compositionTarget->SetRoot(r.visual.Get()))) return hr;
     RefreshTheme();
@@ -447,12 +450,27 @@ HRESULT Renderer::Draw(const Frame& frame, const wchar_t* snapshotPath) {
     RECT client{};
     if (!GetClientRect(r.window, &client)) return HRESULT_FROM_WIN32(GetLastError());
     if (FAILED(hr = r.visual->SetOffsetX(-static_cast<float>(static_cast<int>(r.width) - client.right) * 0.5f))) return hr;
-    if (FAILED(hr = r.visualEffect->SetOpacity(frame.opacity))) return hr;
+    // The surface emerges from the display edge; the HWND remains attached and
+    // never activates. Scale is anchored to the top center in device pixels.
+    const float dpiScale = static_cast<float>(r.dpi) / 96.0f;
+    if (FAILED(hr = r.presentationScale->SetCenterX(static_cast<float>(r.width) * 0.5f))) return hr;
+    if (FAILED(hr = r.presentationScale->SetCenterY(0.0f))) return hr;
+    if (FAILED(hr = r.presentationScale->SetScaleX(frame.presentation.scale))) return hr;
+    if (FAILED(hr = r.presentationScale->SetScaleY(frame.presentation.scale))) return hr;
+    if (FAILED(hr = r.visual->SetOffsetY(frame.presentation.offsetY * dpiScale))) return hr;
+    if (FAILED(hr = r.visualEffect->SetOpacity(frame.opacity * frame.presentation.opacity))) return hr;
     if (FAILED(hr = r.composition->Commit())) return hr;
     DXGI_PRESENT_PARAMETERS parameters{};
     // Morphing changes the shell and its shadow, so those frames need the whole
     // small surface. Text layouts, control paths and the shadow are cached at rest.
     return r.swapchain->Present1(1, 0, &parameters);
+}
+
+HRESULT Renderer::Conceal() {
+    auto& r = *m_impl;
+    if (!r.visualEffect || !r.composition) return E_UNEXPECTED;
+    const HRESULT result = r.visualEffect->SetOpacity(0.0f);
+    return FAILED(result) ? result : r.composition->Commit();
 }
 
 HRESULT Renderer::SaveFramePng(const wchar_t* path) const {

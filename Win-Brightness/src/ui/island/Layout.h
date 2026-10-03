@@ -14,6 +14,12 @@ inline constexpr float kRowStride = kRowHeight + kRowGap;
 inline constexpr float kShadowMargin = 16.0f;
 inline constexpr size_t kVisibleMonitors = 5;
 
+struct Presentation { float scale = 1, offsetY = 0, opacity = 1; };
+inline Presentation PresentPanel(float height, double progress) {
+    const float p = static_cast<float>(std::clamp(progress, 0.0, 1.0));
+    return {0.97f + 0.03f * p, -(height + kShadowMargin) * (1.0f - p), std::min(1.0f, p * 3.0f)};
+}
+
 inline float FooterHeight(float availableWidth) { return availableWidth < 350.0f ? 83.0f : 34.0f; }
 inline float PanelHeight(size_t monitorCount, float availableHeight, float availableWidth = kWidth) {
     const size_t rows = std::clamp(monitorCount, size_t{1}, kVisibleMonitors);
