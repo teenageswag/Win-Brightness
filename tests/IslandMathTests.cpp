@@ -39,6 +39,11 @@ int main() try {
     }
     Check(!island::InsideSquircle({0, 0}, {0, 0, 344, 64}, 32), "transparent corner excluded");
     Check(island::InsideSquircle({172, 0}, {0, 0, 344, 64}, 32), "top edge stays attached");
+    const auto attached = island::Squircle(420, 218, 30, true);
+    Check(attached.front().x == 420 && attached.front().y == 0 &&
+          attached.back().x == 0 && attached.back().y == 0, "top corners meet the screen edge exactly");
+    Check(island::InsideSquircle({0, 0}, {0, 0, 420, 218}, 30, true), "top corner remains opaque and interactive");
+    Check(!island::InsideSquircle({0, 217.9f}, {0, 0, 420, 218}, 30, true), "bottom corner retains continuous rounding");
     std::puts("IslandMathTests passed");
 } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());

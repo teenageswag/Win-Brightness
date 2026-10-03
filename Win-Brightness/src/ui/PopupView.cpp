@@ -535,7 +535,7 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
         POINT pixel{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}; ScreenToClient(window, &pixel);
         const auto point = r.Mouse(MAKELPARAM(pixel.x, pixel.y));
         const float radius = std::min(32.0f, static_cast<float>(r.height.Value()) * 0.14f);
-        return island::InsideSquircle(point, r.Layout().shell, radius) ? HTCLIENT : HTTRANSPARENT;
+        return island::InsideSquircle(point, r.Layout().shell, radius, true) ? HTCLIENT : HTTRANSPARENT;
     }
     case WM_DPICHANGED:
         r.dpi = HIWORD(wParam); r.MeasureMonitor(false); r.Targets(); r.Position(); r.lastFrame = {};

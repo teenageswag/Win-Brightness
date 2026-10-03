@@ -21,7 +21,7 @@ inline constexpr float kExponent = 4.5f;
 inline constexpr size_t kCornerSegments = 64;
 using SquirclePoints = std::array<Point, 4 * (kCornerSegments + 1)>;
 
-inline SquirclePoints Squircle(float width, float height, float radius) {
+inline SquirclePoints Squircle(float width, float height, float radius, bool squareTop = false) {
     SquirclePoints points{};
     const double r = std::clamp(static_cast<double>(radius), 0.0,
                               static_cast<double>(std::min(width, height)) * 0.5);
@@ -45,15 +45,18 @@ inline SquirclePoints Squircle(float width, float height, float radius) {
                 centers[corner].x + static_cast<float>(r * axis(std::cos(t))),
                 centers[corner].y + static_cast<float>(r * axis(std::sin(t)))
             };
+            if (squareTop && corner == 0) points[corner * (kCornerSegments + 1) + step] = {width, 0};
+            if (squareTop && corner == 3) points[corner * (kCornerSegments + 1) + step] = {0, 0};
         }
     }
     return points;
 }
 
-inline bool InsideSquircle(Point point, Rect bounds, float radius) {
+inline bool InsideSquircle(Point point, Rect bounds, float radius, bool squareTop = false) {
     if (!bounds.Contains(point)) return false;
     const float r = std::clamp(radius, 0.0f, std::min(bounds.Width(), bounds.Height()) * 0.5f);
     if (r == 0.0f) return true;
+    if (squareTop && point.y <= bounds.top + r) return true;
     const float x = std::max(std::abs(point.x - (bounds.left + bounds.right) * 0.5f)
                              - (bounds.Width() * 0.5f - r), 0.0f) / r;
     const float y = std::max(std::abs(point.y - (bounds.top + bounds.bottom) * 0.5f)

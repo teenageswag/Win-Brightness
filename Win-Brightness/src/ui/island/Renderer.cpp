@@ -57,6 +57,7 @@ struct Apartment {
 };
 struct Shape {
     float width = -1.0f, height = -1.0f, radius = -1.0f;
+    bool squareTop = false;
     ComPtr<ID2D1PathGeometry> path;
 };
 struct Text {
@@ -105,28 +106,28 @@ struct Renderer::Impl {
     }
 
     void Fail(HRESULT error) { if (FAILED(error) && SUCCEEDED(drawingError)) drawingError = error; }
-    ID2D1PathGeometry* Geometry(float w, float h, float r) {
+    ID2D1PathGeometry* Geometry(float w, float h, float r, bool squareTop = false) {
         if (shapeCursor == shapes.size()) shapes.emplace_back();
         auto& shape = shapes[shapeCursor++];
-        if (shape.width == w && shape.height == h && shape.radius == r && shape.path) return shape.path.Get();
+        if (shape.width == w && shape.height == h && shape.radius == r && shape.squareTop == squareTop && shape.path) return shape.path.Get();
         shape.path.Reset();
         Fail(factory->CreatePathGeometry(&shape.path));
         if (!shape.path) return nullptr;
         ComPtr<ID2D1GeometrySink> sink;
         Fail(shape.path->Open(&sink));
         if (!sink) return nullptr;
-        const auto points = Squircle(w, h, r);
+        const auto points = Squircle(w, h, r, squareTop);
         sink->BeginFigure(D2D1::Point2F(points[0].x, points[0].y), D2D1_FIGURE_BEGIN_FILLED);
         for (size_t i = 1; i < points.size(); ++i) sink->AddLine(D2D1::Point2F(points[i].x, points[i].y));
         sink->EndFigure(D2D1_FIGURE_END_CLOSED);
         Fail(sink->Close());
-        shape.width = w; shape.height = h; shape.radius = r;
+        shape.width = w; shape.height = h; shape.radius = r; shape.squareTop = squareTop;
         return shape.path.Get();
     }
 
-    void ShapeFill(Rect rect, float radius, D2D1_COLOR_F color, float scale = 1.0f, bool stroke = false) {
+    void ShapeFill(Rect rect, float radius, D2D1_COLOR_F color, float scale = 1.0f, bool stroke = false, bool squareTop = false) {
         if (rect.Width() <= 0.0f || rect.Height() <= 0.0f) return;
-        auto* geometry = Geometry(rect.Width(), rect.Height(), radius);
+        auto* geometry = Geometry(rect.Width(), rect.Height(), radius, squareTop);
         if (!geometry) return;
         D2D1_MATRIX_3X2_F previous{};
         context->GetTransform(&previous);
@@ -401,7 +402,7 @@ HRESULT Renderer::Draw(const Frame& frame, const wchar_t* snapshotPath) {
         (frame.preferences.theme == Theme::System && r.systemLight), r.highContrast,
         frame.preferences.translucent && r.systemTransparency);
     const float left = (r.canvasWidth - body.Width()) * 0.5f;
-    auto* bodyGeometry = r.Geometry(body.Width(), body.Height(), frame.radius);
+    auto* bodyGeometry = r.Geometry(body.Width(), body.Height(), frame.radius, true);
     if (!bodyGeometry) return r.drawingError;
     HRESULT hr = S_OK;
     if (!r.shadowSource || r.shadowWidth != body.Width() || r.shadowHeight != body.Height() || r.shadowRadius != frame.radius) {
@@ -435,7 +436,7 @@ HRESULT Renderer::Draw(const Frame& frame, const wchar_t* snapshotPath) {
     r.Content(frame.layout, frame, palette, 1.0f);
     r.context->PopLayer();
     r.ShapeFill({0.5f, 0.5f, body.right - 0.5f, body.bottom - 0.5f},
-                std::max(0.0f, frame.radius - 0.5f), palette.border, 1.0f, true);
+                std::max(0.0f, frame.radius - 0.5f), palette.border, 1.0f, true, true);
     r.context->SetTransform(D2D1::Matrix3x2F::Identity());
     hr = r.context->EndDraw();
     if (FAILED(hr)) return hr;
