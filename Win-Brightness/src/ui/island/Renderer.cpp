@@ -267,13 +267,6 @@ struct Renderer::Impl {
                 Label(state.catalogError ? L"Unable to enumerate displays" : L"Detecting displays\x2026",
                       layout.viewport, 14, DWRITE_FONT_WEIGHT_MEDIUM, state.catalogError ? palette.error : palette.muted, true);
             }
-            if (layout.MaximumScroll() > 0.0f) {
-                const float contentHeight = static_cast<float>(layout.rows.size()) * kRowStride - kRowGap;
-                const float barHeight = std::max(20.0f, layout.viewport.Height() * layout.viewport.Height() / contentHeight);
-                const float scroll = layout.viewport.top - layout.rows.front().label.top;
-                const float barTop = layout.viewport.top + scroll / layout.MaximumScroll() * (layout.viewport.Height() - barHeight);
-                ShapeFill({layout.viewport.right - 2, barTop, layout.viewport.right, barTop + barHeight}, 1, palette.muted);
-            }
             context->PopAxisAlignedClip();
             Rect modes{layout.software.left, layout.software.top, layout.hardware.right, layout.hardware.bottom};
             ShapeFill(modes, modes.Height() * 0.5f, palette.surface);
