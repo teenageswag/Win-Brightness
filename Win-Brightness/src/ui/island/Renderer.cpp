@@ -33,6 +33,18 @@ D2D1_COLOR_F SystemColor(int index) {
     const COLORREF value = GetSysColor(index);
     return {GetRValue(value) / 255.0f, GetGValue(value) / 255.0f, GetBValue(value) / 255.0f, 1.0f};
 }
+struct ControlTransform {
+    ID2D1DeviceContext* context;
+    D2D1_MATRIX_3X2_F previous{};
+    ControlTransform(ID2D1DeviceContext* value, Rect rect, float scale) : context(value) {
+        context->GetTransform(&previous);
+        context->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale,
+            D2D1::Point2F((rect.left + rect.right) * 0.5f, (rect.top + rect.bottom) * 0.5f)) * previous);
+    }
+    ~ControlTransform() { context->SetTransform(previous); }
+    ControlTransform(const ControlTransform&) = delete;
+    ControlTransform& operator=(const ControlTransform&) = delete;
+};
 struct Palette {
     D2D1_COLOR_F background, surface, text, muted, track, fill, fillText, selected, selectedText, border, error;
     float shadow;
@@ -188,7 +200,14 @@ struct Renderer::Impl {
     DWRITE_FONT_WEIGHT ControlWeight(Target control, const Frame& frame) const {
         return Focused(control, frame) ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_MEDIUM;
     }
+    void ControlLabel(const wchar_t* value, Rect rect, Target control, const Frame& frame, D2D1_COLOR_F color) {
+        const ControlTransform transform(context.Get(), rect, Scale(control, frame));
+        Label(value, rect, 13, ControlWeight(control, frame), color, true);
+    }
     void Slider(const Row& row, const Frame& frame, const Palette& palette) {
+        // Scale the rail, fill, text and clips together around the full control;
+        // scaling the rail alone makes the fill protrude while pressing.
+        const ControlTransform transform(context.Get(), row.slider, Scale({Control::Slider, row.index}, frame));
         const PopupState& state = *frame.state;
         const bool selected = row.index < state.monitors.size() && (state.mode == BrightnessMode::Software ||
             (state.monitors[row.index].hardwareBrightness && state.monitors[row.index].hardwareStatus == HardwareStatus::Available));
@@ -199,7 +218,7 @@ struct Renderer::Impl {
         auto track = Focused({Control::Slider, row.index}, frame)
             ? Mix(palette.track, palette.text, 0.16f) : palette.track;
         track.a *= alpha;
-        ShapeFill(row.slider, row.slider.Height() * 0.5f, track, Scale({Control::Slider, row.index}, frame));
+        ShapeFill(row.slider, row.slider.Height() * 0.5f, track);
         Rect fill = row.slider;
         fill.right = fill.left + std::clamp(railValue / 100.0f, 0.0f, 1.0f) * fill.Width();
         auto accent = palette.fill; accent.a *= alpha;
@@ -265,14 +284,14 @@ struct Renderer::Impl {
                 ShapeFill(layout.software, 17, Mix(palette.surface, palette.text, 0.12f), Scale({Control::Software}, frame));
             if ((frame.hot.control == Control::Hardware || Focused({Control::Hardware}, frame)) && state.mode == BrightnessMode::Software)
                 ShapeFill(layout.hardware, 17, Mix(palette.surface, palette.text, 0.12f), Scale({Control::Hardware}, frame));
-            Label(L"Software", layout.software, 13, ControlWeight({Control::Software}, frame),
-                  Mix(palette.selectedText, palette.text, frame.modePosition), true);
-            Label(L"Hardware", layout.hardware, 13, ControlWeight({Control::Hardware}, frame),
-                  Mix(palette.text, palette.selectedText, frame.modePosition), true);
+            ControlLabel(L"Software", layout.software, {Control::Software}, frame,
+                         Mix(palette.selectedText, palette.text, frame.modePosition));
+            ControlLabel(L"Hardware", layout.hardware, {Control::Hardware}, frame,
+                         Mix(palette.text, palette.selectedText, frame.modePosition));
             const auto powerSurface = Focused({Control::Power}, frame)
                 ? Mix(palette.surface, palette.text, 0.12f) : palette.surface;
             ShapeFill(layout.power, 17, powerSurface, Scale({Control::Power}, frame));
-            Label(state.enabled ? L"Disable" : L"Enable", layout.power, 13, ControlWeight({Control::Power}, frame), palette.text, true);
+            ControlLabel(state.enabled ? L"Disable" : L"Enable", layout.power, {Control::Power}, frame, palette.text);
         }
         context->PopLayer();
     }
