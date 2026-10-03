@@ -225,7 +225,9 @@ int main() try {
     }
     Pump();
     Check(GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS) == gdiBefore, "popup recreation does not leak GDI objects");
-    Check(GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS) == userBefore, "popup recreation does not leak USER objects");
+    // Deferred graphics cleanup can lower the baseline USER count. A decrease
+    // is not a leak; repeated popup destruction must not increase the count.
+    Check(GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS) <= userBefore, "popup recreation does not leak USER objects");
     popup.Toggle({0, 0}); Settle(popup);
     GetWindowRect(popup.GetHWnd(), &actual);
     popup.NotifyPointerDown({actual.left + 100, actual.top + 25});
