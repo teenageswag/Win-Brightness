@@ -51,12 +51,21 @@ int main() try {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     int committed = -1, commits = 0, committedBeforeMode = -1;
     std::wstring committedId;
+    bool testOutsideClicks = false;
+    HWND testWindow = nullptr;
     PopupActions actions;
     actions.setMonitorBrightness = [&](const std::wstring& id, int value) { committedId = id; committed = value; ++commits; };
     actions.setMode = [&](BrightnessMode) { committedBeforeMode = committed; };
-    actions.isTrayPoint = [](POINT point) { return point.x == 1234 && point.y == 9876; };
+    actions.isTrayPoint = [&](POINT point) {
+        if (point.x == 1234 && point.y == 9876) return true;
+        RECT bounds{};
+        // Keep unrelated desktop input out of synthetic UI tests. The dedicated
+        // dismissal checks below enable the production outside-click path.
+        return !testOutsideClicks && GetWindowRect(testWindow, &bounds) && !PtInRect(&bounds, point);
+    };
     PopupView popup(GetModuleHandleW(nullptr), std::move(actions));
     Check(popup.Register() && popup.Create(), "create popup");
+    testWindow = popup.GetHWnd();
     popup.SetPreferences({island::Theme::Dark, false, false});
     PopupState saved;
     for (size_t i = 0; i < 7; ++i) {
@@ -77,9 +86,16 @@ int main() try {
     Settle(popup);
     Check(popup.FrameWaitHandle() == nullptr, "idle has no frame wakeups");
     for (int sample = 0; sample < 3; ++sample) {
+        GetWindowRect(popup.GetHWnd(), &actual);
+        popup.NotifyPointerDown({actual.left + 100, actual.top + 25});
+        Settle(popup);
         const ULONGLONG idleStart = CpuTicks();
         Sleep(1000);
         Pump();
+        if (popup.FrameWaitHandle()) {
+            std::fprintf(stderr, "Unexpected idle frame: visible=%d y=%.2f raw=%d\n", popup.IsVisible(),
+                popup.GetPresentation().offsetY, OwnsRawMouse(popup.GetHWnd()));
+        }
         Check(popup.FrameWaitHandle() == nullptr, "idle remains asleep without periodic frames");
         std::printf("Idle CPU, sample %d over 1 second: %.3f ms\n", sample + 1,
                     static_cast<double>(CpuTicks() - idleStart) / 10000.0);
@@ -216,10 +232,12 @@ int main() try {
     Check(popup.IsVisible(), "click inside the visible panel keeps it open");
     popup.NotifyPointerDown({1234, 9876});
     Check(popup.IsVisible(), "own tray click is handled by toggle rather than outside dismissal");
+    testOutsideClicks = true;
     popup.NotifyPointerDown({actual.right + 100, actual.top + 25});
     Check(popup.IsVisible(), "outside dismissal starts an animation rather than hiding immediately");
     Settle(popup);
     Check(!popup.IsVisible() && !OwnsRawMouse(popup.GetHWnd()), "outside click animates out and releases raw observation");
+    testOutsideClicks = false;
     popup.Toggle({0, 0}); Settle(popup);
     Sleep(3600); Pump(); Settle(popup);
     Check(!popup.IsVisible() && popup.FrameWaitHandle() == nullptr && !OwnsRawMouse(popup.GetHWnd()),
