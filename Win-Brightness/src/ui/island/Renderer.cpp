@@ -196,20 +196,24 @@ struct Renderer::Impl {
 
     void Slider(const Row& row, const Frame& frame, const Palette& palette, bool compact) {
         const PopupState& state = *frame.state;
-        const bool selected = row.index < state.monitors.size() && state.selection.Contains(state.monitors[row.index].id);
+        const bool selected = row.index < state.monitors.size() && (state.mode == BrightnessMode::Software ||
+            (state.monitors[row.index].hardwareBrightness && state.monitors[row.index].hardwareStatus == HardwareStatus::Available));
+        const int percentValue = row.index < state.monitors.size() ? state.monitors[row.index].brightness : kDefaultBrightness;
+        const float railValue = row.index < frame.rowValues.size() ? frame.rowValues[row.index] : static_cast<float>(percentValue);
+        const float numberFeedback = row.index < frame.rowFeedback.size() ? frame.rowFeedback[row.index] : 0;
         const float alpha = state.enabled && selected ? 1.0f : 0.45f;
         auto track = palette.track; track.a *= alpha;
         ShapeFill(row.slider, row.slider.Height() * 0.5f, track, Scale({Control::Slider, row.index}, frame));
         Rect fill = row.slider;
-        fill.right = fill.left + std::clamp(frame.sliderValue / 100.0f, 0.0f, 1.0f) * fill.Width();
+        fill.right = fill.left + std::clamp(railValue / 100.0f, 0.0f, 1.0f) * fill.Width();
         auto accent = palette.fill; accent.a *= alpha;
         if (selected) ShapeFill(fill, std::min(fill.Height() * 0.5f, fill.Width() * 0.5f), accent);
         if (!compact) {
             wchar_t percent[16]{};
-            if (selected) swprintf_s(percent, L"%d%%", state.brightness);
+            if (selected) swprintf_s(percent, L"%d%%", percentValue);
             else swprintf_s(percent, L"\x2014");
-            Rect number{row.slider.right - 66.0f, row.slider.top + 8.0f - frame.numberFeedback * 1.5f,
-                        row.slider.right - 10.0f, row.slider.bottom - 8.0f - frame.numberFeedback * 1.5f};
+            Rect number{row.slider.right - 66.0f, row.slider.top + 8.0f - numberFeedback * 1.5f,
+                        row.slider.right - 10.0f, row.slider.bottom - 8.0f - numberFeedback * 1.5f};
             Label(percent, number, 13, DWRITE_FONT_WEIGHT_MEDIUM,
                   highContrast ? palette.text : Color(0xFFFFFF), true);
             if (selected) {
@@ -233,11 +237,11 @@ struct Renderer::Impl {
             Label(name, row.label, 13, DWRITE_FONT_WEIGHT_MEDIUM, palette.text);
             Slider(row, frame, palette, true);
             wchar_t value[16]{};
-            if (row.index < state.monitors.size() && state.selection.Contains(state.monitors[row.index].id))
-                swprintf_s(value, L"%d%%", state.brightness);
+            if (row.index < state.monitors.size())
+                swprintf_s(value, L"%d%%", state.monitors[row.index].brightness);
             else swprintf_s(value, L"\x2014");
-            Label(value, {layout.shell.right - 94.0f, 18.0f - frame.numberFeedback * 1.5f,
-                          layout.shell.right - 44.0f, 46.0f - frame.numberFeedback * 1.5f},
+            Label(value, {layout.shell.right - 94.0f, 18.0f,
+                          layout.shell.right - 44.0f, 46.0f},
                   20, DWRITE_FONT_WEIGHT_SEMI_BOLD, state.enabled ? palette.text : palette.muted, true);
             ShapeFill(layout.power, 16, palette.surface, Scale({Control::Power}, frame));
             brush->SetColor(state.enabled ? palette.text : palette.muted);
@@ -251,13 +255,7 @@ struct Renderer::Impl {
             for (const auto& row : layout.rows) {
                 if (row.slider.bottom < layout.viewport.top || row.label.top > layout.viewport.bottom) continue;
                 const auto& monitor = state.monitors[row.index];
-                const bool selected = state.selection.Contains(monitor.id);
-                brush->SetColor(selected ? palette.text : palette.muted);
-                const auto dot = D2D1::Ellipse(D2D1::Point2F(row.label.left + 5.0f, row.label.top + 10.0f), 4.0f, 4.0f);
-                if (selected) context->FillEllipse(dot, brush.Get());
-                else context->DrawEllipse(dot, brush.Get(), 1.0f);
                 Rect label = row.label;
-                label.left += 18.0f;
                 label.right -= state.mode == BrightnessMode::Hardware ? 82.0f : 0.0f;
                 Label(monitor.name, label, 14, DWRITE_FONT_WEIGHT_MEDIUM, palette.text);
                 if (state.mode == BrightnessMode::Hardware) {
@@ -296,13 +294,10 @@ struct Renderer::Impl {
                   Mix(palette.selectedText, palette.text, frame.modePosition), true);
             Label(L"Hardware", layout.hardware, 13, DWRITE_FONT_WEIGHT_MEDIUM,
                   Mix(palette.text, palette.selectedText, frame.modePosition), true);
-            ShapeFill(layout.scope, 17, palette.surface, Scale({Control::Scope}, frame));
-            Label(state.selection.all ? L"All" : L"Group", layout.scope, 12, DWRITE_FONT_WEIGHT_MEDIUM, palette.text, true);
             ShapeFill(layout.power, 17, palette.surface, Scale({Control::Power}, frame));
             Label(state.enabled ? L"Disable" : L"Enable", layout.power, 13, DWRITE_FONT_WEIGHT_MEDIUM, palette.text, true);
             Focus(layout.software, {Control::Software}, frame, palette);
             Focus(layout.hardware, {Control::Hardware}, frame, palette);
-            Focus(layout.scope, {Control::Scope}, frame, palette);
         }
         Focus(layout.power, {Control::Power}, frame, palette);
         if (frame.hot.control == Control::Expand) ShapeFill(layout.expand, 12, palette.surface, frame.hotScale);

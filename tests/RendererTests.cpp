@@ -33,7 +33,9 @@ int wmain(int argc, wchar_t** argv) try {
     island::Frame frame;
     frame.state = &state;
     frame.preferences.theme = island::Theme::Dark;
-    frame.sliderValue = 72;
+    state.monitors[0].brightness = 72;
+    state.monitors[1].brightness = 35;
+    for (auto& monitor : state.monitors) monitor.hardwareBrightness = monitor.hardwareStatus == HardwareStatus::Available;
     float scale = 1;
     float scroll = 0;
     auto draw = [&](float w, float h, float expansion, const wchar_t* output) {

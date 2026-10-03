@@ -27,7 +27,7 @@ int main() try {
     Check(layout.rows[0].slider.top - layout.rows[0].label.bottom == 10, "label spacing");
     Check(layout.viewport.left == 15 && layout.viewport.top == 15, "outer padding");
     const auto narrow = island::Layout::Build(340, island::ExpandedHeight(5, 1000, 340), true, 5, 0, 0, 340);
-    Check(narrow.power.Width() >= 75 && narrow.scope.Width() >= 65 && narrow.hardware.Width() >= 85,
+    Check(narrow.power.Width() >= 75 && narrow.hardware.Width() >= 85,
           "buttons remain usable on a narrow DPI-scaled desktop");
     Check(narrow.MaximumScroll() == 0 && narrow.power.top > narrow.hardware.bottom,
           "narrow footer wraps without losing five rows");

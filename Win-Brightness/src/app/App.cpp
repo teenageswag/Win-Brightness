@@ -94,11 +94,9 @@ bool App::Init() {
     }
 
     PopupActions actions;
-    actions.setBrightness = [this](int brightness) { SetBrightness(brightness); };
     actions.setMonitorBrightness = [this](const std::wstring& id, int value) { SetMonitorBrightness(id, value); };
     actions.setEnabled = [this](bool enabled) { SetEnabled(enabled); };
     actions.setMode = [this](BrightnessMode mode) { SetBrightnessMode(mode); };
-    actions.setSelection = [this](MonitorSelection selection) { SetMonitorSelection(std::move(selection)); };
     actions.setAutostart = [this](bool enabled) { SetAutostartEnabled(enabled); };
     actions.reportUiError = [this](HRESULT error) {
         ReportInterfaceError(L"The brightness interface could not render. Display control remains available from the tray.", error);

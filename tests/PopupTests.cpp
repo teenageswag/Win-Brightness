@@ -40,12 +40,11 @@ void Settle(PopupView& popup) {
 }
 int main() try {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    int committed = -1, commits = 0, committedBeforeMode = -1, selectionChanges = 0;
-    MonitorSelection lastSelection;
+    int committed = -1, commits = 0, committedBeforeMode = -1;
+    std::wstring committedId;
     PopupActions actions;
-    actions.setBrightness = [&](int value) { committed = value; ++commits; };
+    actions.setMonitorBrightness = [&](const std::wstring& id, int value) { committedId = id; committed = value; ++commits; };
     actions.setMode = [&](BrightnessMode) { committedBeforeMode = committed; };
-    actions.setSelection = [&](MonitorSelection selection) { ++selectionChanges; lastSelection = std::move(selection); };
     PopupView popup(GetModuleHandleW(nullptr), std::move(actions));
     Check(popup.Register() && popup.Create(), "create popup");
     popup.SetPreferences({island::Theme::Dark, false, false});
@@ -65,7 +64,6 @@ int main() try {
     GetWindowRect(popup.GetHWnd(), &actual);
     Check(actual.top == monitor.rcMonitor.top, "island attached to screen top");
     Check((GetWindowLongPtrW(popup.GetHWnd(), GWL_EXSTYLE) & WS_EX_NOACTIVATE) != 0, "NOACTIVATE style");
-    Check(selectionChanges == 0, "showing does not change monitor selection");
     Settle(popup);
     Check(popup.FrameWaitHandle() == nullptr, "idle has no frame wakeups");
     for (int sample = 0; sample < 3; ++sample) {
@@ -79,7 +77,6 @@ int main() try {
     popup.SetExpanded(true);
     const auto fiveRows = popup.GetLayout();
     Check(fiveRows.MaximumScroll() == 2 * island::kRowStride, "five visible monitors and overflow scroll");
-    Check(selectionChanges == 0, "morphing does not change selection");
     popup.HandleMessage(popup.GetHWnd(), WM_KEYDOWN, VK_RIGHT, 0);
     popup.SetState(saved);
     popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
@@ -131,9 +128,29 @@ int main() try {
     auto reordered = saved;
     std::swap(reordered.monitors[1], reordered.monitors[2]);
     popup.SetState(reordered);
-    popup.HandleMessage(popup.GetHWnd(), WM_KEYDOWN, VK_SPACE, 0);
-    Check(!lastSelection.all && lastSelection.ids == std::vector<std::wstring>{L"1"},
-          "keyboard focus follows monitor ID after catalog reorder");
+    popup.HandleMessage(popup.GetHWnd(), WM_KEYDOWN, VK_RIGHT, 0);
+    popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
+    Check(committedId == L"1", "keyboard focus follows monitor ID after catalog reorder");
+    popup.SetState(saved);
+
+    Click(popup, popup.GetLayout().rows[0].label);
+    commits = 0;
+    popup.HandleMessage(popup.GetHWnd(), WM_KEYDOWN, VK_RIGHT, 0);
+    popup.HandleMessage(popup.GetHWnd(), WM_KEYDOWN, VK_TAB, 0);
+    popup.HandleMessage(popup.GetHWnd(), WM_KEYDOWN, VK_RIGHT, 0);
+    popup.SetState(saved);
+    popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
+    Check(commits == 2 && committedId == L"1" && committed == 73,
+          "two independent pending targets survive synchronization");
+    auto hardware = saved; hardware.mode = BrightnessMode::Hardware;
+    hardware.monitors[0].hardwareBrightness = true; hardware.monitors[0].hardwareStatus = HardwareStatus::Available;
+    hardware.monitors[1].hardwareStatus = HardwareStatus::Unsupported;
+    popup.SetState(hardware); commits = 0;
+    Click(popup, popup.GetLayout().rows[1].slider);
+    popup.HandleMessage(popup.GetHWnd(), WM_TIMER, 1, 0);
+    Check(commits == 0 && GetCapture() != popup.GetHWnd(), "unavailable hardware row cannot adjust or capture");
+    Click(popup, popup.GetLayout().rows[0].slider);
+    Check(commits == 1 && committedId == L"0", "available hardware row remains independently adjustable");
     popup.SetState(saved);
 
     RECT suggested{100, 150, 900, 750};
@@ -143,9 +160,6 @@ int main() try {
     popup.HandleMessage(popup.GetHWnd(), WM_DPICHANGED, MAKELONG(96, 96), reinterpret_cast<LPARAM>(&suggested));
     popup.SetPreferences({island::Theme::Light, false, true});
     popup.SetExpanded(false); Settle(popup); popup.SetExpanded(true);
-    const int beforeHiddenScope = selectionChanges;
-    Click(popup, popup.GetLayout().scope);
-    Check(selectionChanges == beforeHiddenScope, "invisible scope button cannot activate during morph");
     for (int i = 0; i < 3; ++i) {
         HANDLE frame = popup.FrameWaitHandle();
         Check(frame && WaitForSingleObject(frame, 2000) == WAIT_OBJECT_0, "morph frame"); popup.RenderFrame();

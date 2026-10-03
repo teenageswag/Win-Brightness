@@ -39,11 +39,16 @@ struct PopupView::Impl {
     island::FrameClock clock;
     island::Spring width{island::kCompactWidth}, height{island::kCompactHeight};
     island::Spring expansion{0}, visibility{1, island::kFeedbackSpring};
-    island::Spring slider{72, island::kSliderSpring}, mode{0, island::kFeedbackSpring};
-    island::Spring feedback{1, island::kFeedbackSpring}, number{0, island::kFeedbackSpring};
+    struct RowMotion {
+        island::Spring slider{kDefaultBrightness, island::kSliderSpring};
+        island::Spring number{0, island::kFeedbackSpring};
+    };
+    std::map<std::wstring, RowMotion> rows;
+    MonitorBrightnessValues pending;
+    island::Spring mode{0, island::kFeedbackSpring}, feedback{1, island::kFeedbackSpring};
     island::Target focus{island::Control::Slider, 0}, hover{}, pressed{};
     bool expanded = false, dirty = true, dragging = false, dragCompact = false, tracking = false;
-    bool pendingBrightness = false, brightnessTimer = false, hiding = false, keyboardMode = false;
+    bool brightnessTimer = false, hiding = false, keyboardMode = false;
     bool reducedMotion = false, repositioning = false, finishingDrag = false;
     std::wstring dragId, tooltipText;
     float scroll = 0, maximumHeight = 449, maximumWidth = 420;
@@ -101,7 +106,9 @@ struct PopupView::Impl {
     }
     bool Moving() const {
         return width.Active(0.05) || height.Active(0.05) || expansion.Active() || visibility.Active() ||
-            slider.Active(0.05) || mode.Active() || feedback.Active() || number.Active();
+            mode.Active() || feedback.Active() || std::ranges::any_of(rows, [](const auto& entry) {
+                return entry.second.slider.Active(0.05) || entry.second.number.Active();
+            });
     }
     island::Layout Layout(bool isExpanded) const {
         return island::Layout::Build(static_cast<float>(width.Value()), static_cast<float>(height.Value()),
@@ -179,21 +186,25 @@ struct PopupView::Impl {
         const float ratio = std::clamp((x - rect.left) / rect.Width(), 0.0f, 1.0f);
         return static_cast<double>(ratio) * 99.0 + 1.0;
     }
+    bool Adjustable(size_t index) const {
+        return index < state.monitors.size() && (state.mode == BrightnessMode::Software ||
+            (state.monitors[index].hardwareBrightness && state.monitors[index].hardwareStatus == HardwareStatus::Available));
+    }
     void AccessibleName() {
         std::wstring name = L"trenches. ";
         switch (focus.control) {
         case island::Control::Slider:
             if (focus.monitor < state.monitors.size()) name += state.monitors[focus.monitor].name + L". ";
-            name += L"Linked brightness " + std::to_wstring(state.brightness) + L" percent.";
+            if (focus.monitor < state.monitors.size()) name += L"Brightness " +
+                std::to_wstring(state.monitors[focus.monitor].brightness) + L" percent.";
+            if (!Adjustable(focus.monitor)) name += L" Hardware brightness unavailable.";
             break;
         case island::Control::Monitor:
-            if (focus.monitor < state.monitors.size()) name += state.monitors[focus.monitor].name +
-                (state.selection.Contains(state.monitors[focus.monitor].id) ? L". Selected." : L". Not selected.");
+            if (focus.monitor < state.monitors.size()) name += state.monitors[focus.monitor].name;
             break;
         case island::Control::Software: name += L"Software dimming."; break;
         case island::Control::Hardware: name += L"Hardware DDC CI."; break;
         case island::Control::Power: name += state.enabled ? L"Disable dimming." : L"Enable dimming."; break;
-        case island::Control::Scope: name += state.selection.all ? L"All displays." : L"Selected group."; break;
         case island::Control::Expand: name += expanded ? L"Collapse." : L"Expand."; break;
         case island::Control::None: break;
         }
@@ -229,18 +240,14 @@ struct PopupView::Impl {
         hover = control; feedback.Target(control.control == island::Control::None ? 1.0 : 1.015);
         Tooltip(false);
         if (control.control == island::Control::Monitor && control.monitor < state.monitors.size()) {
-            tooltipText = state.monitors[control.monitor].name + L"\nSelected displays share one brightness value.";
+            tooltipText = state.monitors[control.monitor].name;
             const DWORD error = state.monitors[control.monitor].hardwareError;
             if (error) tooltipText += L"\nDDC/CI error " + std::to_wstring(error) + L".";
-            Tooltip(true);
-        } else if (control.control == island::Control::Scope) {
-            tooltipText = state.selection.all ? L"Switch to selected displays" : L"Select all displays";
             Tooltip(true);
         }
         RequestFrame();
     }
     void QueueBrightness() {
-        pendingBrightness = true;
         // Throttle without restarting a debounce on each pointer message.
         // Optimistic UI is immediate; the backend receives at most ~14 targets/s.
         if (!brightnessTimer) {
@@ -251,40 +258,45 @@ struct PopupView::Impl {
     void CommitBrightness() {
         if (brightnessTimer) KillTimer(window, kBrightnessTimer);
         brightnessTimer = false;
-        if (!pendingBrightness) return;
-        pendingBrightness = false;
-        if (actions.setBrightness) actions.setBrightness(state.brightness);
+        const auto targets = pending;
+        for (const auto& [id, value] : targets) {
+            pending.erase(id);
+            const auto found = std::ranges::find(state.monitors, id, &MonitorInfo::id);
+            if (found != state.monitors.end() && Adjustable(static_cast<size_t>(found - state.monitors.begin())) && actions.setMonitorBrightness)
+                actions.setMonitorBrightness(id, value);
+        }
     }
-    void DisplayBrightness(int value, bool direct) {
+    void DisplayBrightness(size_t index, int value, bool direct) {
+        if (!Adjustable(index)) return;
         value = ClampBrightness(value);
-        if (state.brightness == value) return;
-        state.brightness = value;
-        if (direct || !Animate()) slider.Snap(value); else slider.Target(value);
-        number.Target(1.0); QueueBrightness(); AccessibleName(); RequestFrame();
+        auto& monitor = state.monitors[index];
+        if (monitor.brightness == value) return;
+        monitor.brightness = value; pending[monitor.id] = value;
+        auto& motion = rows[monitor.id];
+        if (direct || !Animate()) motion.slider.Snap(value); else motion.slider.Target(value);
+        motion.number.Target(1.0); QueueBrightness(); AccessibleName(); RequestFrame();
     }
     void DragTo(float x, size_t index) {
         const double value = BrightnessAt(x, index);
-        DisplayBrightness(static_cast<int>(std::lround(value)), true);
+        if (!Adjustable(index)) return;
+        DisplayBrightness(index, static_cast<int>(std::lround(value)), true);
         // Keep the painted fill continuous between integer hardware targets.
-        slider.Snap(value); RequestFrame();
+        rows[state.monitors[index].id].slider.Snap(value); RequestFrame();
     }
     void SelectSliderTarget(size_t index) {
-        if (index >= state.monitors.size()) return;
-        const auto id = state.monitors[index].id;
-        const bool primaryOnly = !InteractiveLayout().expanded && (state.selection.all || state.selection.ids.size() != 1 ||
-                                               !state.selection.Contains(id));
-        if (primaryOnly || !state.selection.Contains(id)) {
-            CommitBrightness(); state.selection = {false, {id}};
-            if (actions.setSelection) actions.setSelection(state.selection);
-        }
+        if (index < state.monitors.size()) focus = {island::Control::Slider, index};
     }
     void FinishDrag(bool commit = true) {
         if (finishingDrag) return;
+        const auto id = dragId;
         finishingDrag = true; dragging = false; pressed = {}; dragId.clear();
         feedback.Target(hover.control == island::Control::None ? 1.0 : 1.015);
         if (GetCapture() == window) ReleaseCapture();
-        if (commit) { CommitBrightness(); slider.Target(state.brightness); }
-        else { pendingBrightness = false; brightnessTimer = false; KillTimer(window, kBrightnessTimer); }
+        if (commit) CommitBrightness();
+        else pending.erase(id);
+        const auto monitor = std::ranges::find(state.monitors, id, &MonitorInfo::id);
+        if (monitor != state.monitors.end()) rows[id].slider.Target(monitor->brightness);
+        if (pending.empty()) { brightnessTimer = false; KillTimer(window, kBrightnessTimer); }
         finishingDrag = false; RequestFrame();
     }
     void EnsureFocusVisible() {
@@ -300,12 +312,10 @@ struct PopupView::Impl {
         std::vector<island::Target> order;
         const auto layout = Layout(expanded);
         for (const auto& row : layout.rows) {
-            if (expanded) order.push_back({island::Control::Monitor, row.index});
-            order.push_back({island::Control::Slider, row.index});
+            if (Adjustable(row.index)) order.push_back({island::Control::Slider, row.index});
         }
         if (expanded) {
             order.push_back({island::Control::Software}); order.push_back({island::Control::Hardware});
-            order.push_back({island::Control::Scope});
         }
         order.push_back({island::Control::Power}); order.push_back({island::Control::Expand});
         return order;
@@ -336,24 +346,7 @@ struct PopupView::Impl {
             mode.Target(state.mode == BrightnessMode::Hardware ? 1.0 : 0.0);
             if (actions.setMode) actions.setMode(state.mode);
             break;
-        case island::Control::Scope:
-            state.selection.all = !state.selection.all;
-            if (!state.selection.all && state.selection.ids.empty() && !state.monitors.empty())
-                state.selection.ids = {state.monitors[Primary()].id};
-            if (actions.setSelection) actions.setSelection(state.selection);
-            break;
-        case island::Control::Monitor:
-            if (control.monitor < state.monitors.size()) {
-                const auto id = state.monitors[control.monitor].id;
-                if (state.selection.all) state.selection = {false, {id}};
-                else {
-                    const auto found = std::ranges::find(state.selection.ids, id);
-                    if (found == state.selection.ids.end()) state.selection.ids.push_back(id);
-                    else if (state.selection.ids.size() > 1) state.selection.ids.erase(found);
-                }
-                if (actions.setSelection) actions.setSelection(state.selection);
-            }
-            break;
+        case island::Control::Monitor: SelectSliderTarget(control.monitor); break;
         case island::Control::Expand: Expand(!expanded); break;
         case island::Control::Slider:
         case island::Control::None: break;
@@ -452,27 +445,40 @@ void PopupView::Hide(bool animated) {
 }
 void PopupView::SetState(PopupState state) {
     auto& r = *m_impl;
-    const int incomingBrightness = ClampBrightness(state.brightness);
     const bool monitorFocus = r.focus.control == island::Control::Slider || r.focus.control == island::Control::Monitor;
     const std::wstring focusedId = monitorFocus && r.focus.monitor < r.state.monitors.size()
         ? r.state.monitors[r.focus.monitor].id : L"";
-    state.brightness = r.pendingBrightness ? r.state.brightness : ClampBrightness(state.brightness);
-    const std::wstring draggingId = r.dragId;
+    for (auto& monitor : state.monitors) {
+        monitor.brightness = ClampBrightness(monitor.brightness);
+        const auto pending = r.pending.find(monitor.id);
+        if (pending != r.pending.end() && (state.mode == BrightnessMode::Software ||
+            (monitor.hardwareBrightness && monitor.hardwareStatus == HardwareStatus::Available))) monitor.brightness = pending->second;
+    }
     r.state = std::move(state);
+    std::erase_if(r.pending, [&](const auto& entry) {
+        const auto monitor = std::ranges::find(r.state.monitors, entry.first, &MonitorInfo::id);
+        return monitor == r.state.monitors.end() || !r.Adjustable(static_cast<size_t>(monitor - r.state.monitors.begin()));
+    });
+    std::erase_if(r.rows, [&](const auto& entry) {
+        return std::ranges::find(r.state.monitors, entry.first, &MonitorInfo::id) == r.state.monitors.end();
+    });
+    for (const auto& monitor : r.state.monitors) {
+        const auto [motion, inserted] = r.rows.try_emplace(monitor.id);
+        if (inserted) motion->second.slider.Snap(monitor.brightness);
+        else if (!r.dragging || r.dragId != monitor.id) motion->second.slider.Target(monitor.brightness);
+    }
     if (r.dragging) {
-        const auto found = std::ranges::find_if(r.state.monitors, [&draggingId](const auto& monitor) { return monitor.id == draggingId; });
-        if (found == r.state.monitors.end() || (r.dragCompact && r.state.monitors[r.Primary()].id != draggingId)) {
-            r.FinishDrag(false); r.state.brightness = incomingBrightness; r.slider.Snap(incomingBrightness);
-        }
+        const auto found = std::ranges::find(r.state.monitors, r.dragId, &MonitorInfo::id);
+        if (found == r.state.monitors.end() || !r.Adjustable(static_cast<size_t>(found - r.state.monitors.begin())))
+            r.FinishDrag(false);
         else r.pressed.monitor = static_cast<size_t>(found - r.state.monitors.begin());
     }
     if (!focusedId.empty()) {
-        const auto found = std::ranges::find_if(r.state.monitors, [&focusedId](const auto& monitor) { return monitor.id == focusedId; });
-        r.focus = found == r.state.monitors.end() ? island::Target{island::Control::Expand}
+        const auto found = std::ranges::find(r.state.monitors, focusedId, &MonitorInfo::id);
+        r.focus = found == r.state.monitors.end() ? island::Target{island::Control::Power}
             : island::Target{r.focus.control, static_cast<size_t>(found - r.state.monitors.begin())};
     }
-    if (r.focus.monitor >= r.state.monitors.size()) r.focus = {island::Control::Expand};
-    if (!r.dragging && !r.pendingBrightness) r.slider.Target(r.state.brightness);
+    if (r.focus.monitor >= r.state.monitors.size()) r.focus = {island::Control::Power};
     r.mode.Target(r.state.mode == BrightnessMode::Hardware ? 1.0 : 0.0);
     if (!r.window) return;
     r.MeasureMonitor(true); r.Targets();
@@ -500,8 +506,11 @@ void PopupView::RenderFrame() {
         if (r.Animate()) spring.Advance(seconds, epsilon); else spring.Snap(spring.Target());
     };
     advance(r.width, 0.05); advance(r.height, 0.05); advance(r.expansion); advance(r.visibility);
-    advance(r.slider, 0.05); advance(r.mode); advance(r.feedback); advance(r.number);
-    if (r.number.Target() > 0.5 && r.number.Value() > 0.9) r.number.Target(0.0);
+    advance(r.mode); advance(r.feedback);
+    for (auto& [id, motion] : r.rows) {
+        advance(motion.slider, 0.05); advance(motion.number);
+        if (motion.number.Target() > 0.5 && motion.number.Value() > 0.9) motion.number.Target(0.0);
+    }
     r.Position();
     island::Frame frame;
     frame.state = &r.state; frame.compact = r.Layout(false); frame.expanded = r.Layout(true);
@@ -509,8 +518,12 @@ void PopupView::RenderFrame() {
     frame.opacity = static_cast<float>(std::clamp(r.visibility.Value(), 0.0, 1.0));
     frame.radius = std::lerp(static_cast<float>(r.height.Value()) * 0.5f,
                             static_cast<float>(r.height.Value()) * 0.14f, frame.expansion);
-    frame.sliderValue = static_cast<float>(r.slider.Value()); frame.modePosition = static_cast<float>(r.mode.Value());
-    frame.numberFeedback = static_cast<float>(r.number.Value());
+    frame.modePosition = static_cast<float>(r.mode.Value());
+    for (const auto& monitor : r.state.monitors) {
+        const auto& motion = r.rows.at(monitor.id);
+        frame.rowValues.push_back(static_cast<float>(motion.slider.Value()));
+        frame.rowFeedback.push_back(static_cast<float>(motion.number.Value()));
+    }
     frame.hot = r.pressed.control != island::Control::None ? r.pressed : r.hover;
     frame.hotScale = static_cast<float>(r.feedback.Value());
     frame.focus = r.focus; frame.keyboardFocus = r.keyboardMode; frame.preferences = r.preferences;
@@ -581,7 +594,7 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
     case WM_LBUTTONDOWN: {
         r.Tooltip(false);
         const auto point = r.Mouse(lParam); const auto inputLayout = r.InteractiveLayout(); const auto hit = inputLayout.Hit(point);
-        if (hit.control == island::Control::None) return 0;
+        if (hit.control == island::Control::None || (hit.control == island::Control::Slider && !r.Adjustable(hit.monitor))) return 0;
         r.focus = hit; r.pressed = hit; r.feedback.Target(0.97);
         if (hit.control == island::Control::Slider && hit.monitor < r.state.monitors.size()) {
             const auto id = r.state.monitors[hit.monitor].id;
@@ -611,7 +624,7 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
             r.Hover({}); r.RequestFrame();
         } else if (!r.state.monitors.empty()) {
             r.SelectSliderTarget(r.Primary());
-            r.DisplayBrightness(r.state.brightness + GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA * 5, false);
+            r.DisplayBrightness(r.Primary(), r.state.monitors[r.Primary()].brightness + GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA * 5, false);
         }
         return 0;
     case WM_KEYDOWN:
@@ -621,7 +634,8 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
         if (wParam == 'E') { r.Expand(!r.expanded); return 0; }
         if (wParam == VK_SPACE || wParam == VK_RETURN) { r.Activate(r.focus); return 0; }
         if (r.focus.control == island::Control::Slider) {
-            int value = r.state.brightness;
+            if (!r.Adjustable(r.focus.monitor)) return 0;
+            int value = r.state.monitors[r.focus.monitor].brightness;
             const int step = (GetKeyState(VK_SHIFT) & 0x8000) != 0 ? 5 : 1;
             if (wParam == VK_RIGHT || wParam == VK_UP) value += step;
             else if (wParam == VK_LEFT || wParam == VK_DOWN) value -= step;
@@ -630,7 +644,7 @@ LRESULT PopupView::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARA
             else if (wParam == VK_HOME) value = kMinBrightness;
             else if (wParam == VK_END) value = kMaxBrightness;
             else return 0;
-            r.SelectSliderTarget(r.focus.monitor); r.DisplayBrightness(value, false);
+            r.SelectSliderTarget(r.focus.monitor); r.DisplayBrightness(r.focus.monitor, value, false);
         } else if (r.focus.control == island::Control::Software || r.focus.control == island::Control::Hardware) {
             if (wParam == VK_LEFT) r.Activate({island::Control::Software});
             else if (wParam == VK_RIGHT) r.Activate({island::Control::Hardware});

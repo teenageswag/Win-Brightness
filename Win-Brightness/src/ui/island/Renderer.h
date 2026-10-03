@@ -18,9 +18,9 @@ struct Frame {
     float expansion = 0.0f;
     float opacity = 1.0f;
     float radius = 32.0f;
-    float sliderValue = 72.0f;
+    std::vector<float> rowValues;
     float modePosition = 0.0f;
-    float numberFeedback = 0.0f;
+    std::vector<float> rowFeedback;
     Target hot;
     Target focus;
     float hotScale = 1.0f;
